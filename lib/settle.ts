@@ -4,7 +4,13 @@ import { tx } from "./db";
 import { exerciseCost, exercisePayout, sellLoss } from "./options";
 import { getPrices } from "./prices";
 
-const LOCK_KEY = 918273;
+/**
+ * Advisory lock guarding every settlement pass. Anything that settles cards or finalises a
+ * match must hold it, because the settler locks card rows before match rows and a caller that
+ * did the reverse could deadlock against it.
+ */
+export const SETTLE_LOCK_KEY = 918273;
+const LOCK_KEY = SETTLE_LOCK_KEY;
 
 type DueCard = {
   id: number;
@@ -136,7 +142,27 @@ export async function finalizeMatchInTx(
   );
   for (const card of open) {
     const spot = prices[card.asset]?.price;
-    if (spot) await settleCard(c, card, spot);
+    if (spot) {
+      await settleCard(c, card, spot);
+      continue;
+    }
+    // No price for this asset right now. Leaving the card ACTIVE would strand it in a match
+    // that is about to be ranked and closed, so close it out unresolved instead: the writer
+    // gets their collateral back and nobody is charged for our missing data.
+    await c.query(
+      `UPDATE cards SET status = 'SETTLED', settled_at = now(), for_sale = FALSE WHERE id = $1`,
+      [card.id]
+    );
+    if (card.kind === "SELL" && card.collateral > 0) {
+      await c.query(
+        `UPDATE match_players SET pvp_locked = pvp_locked - $3
+          WHERE match_id = $1 AND user_id = $2`,
+        [card.match_id, card.owner_id, card.collateral]
+      );
+    }
+    await logEvent(c, card.id, "VOIDED", {
+      note: "match ended with no price available · closed without settlement",
+    });
   }
 
   // Auto-exercise winners the owner never got to click, when they can afford it.

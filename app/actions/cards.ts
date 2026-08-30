@@ -57,7 +57,12 @@ async function logEvent(
  * ranked or not depending on which transaction landed first, and one that resolves after can
  * never pay out at all — so offering either would be a trap.
  */
-async function assertMatchWindow(c: PoolClient, matchId: number, seconds: number) {
+async function assertMatchWindow(
+  c: PoolClient,
+  matchId: number,
+  userId: number,
+  seconds: number
+) {
   const { rows } = await c.query(
     `SELECT status, ends_at FROM matches WHERE id = $1 FOR SHARE`,
     [matchId]
@@ -65,6 +70,14 @@ async function assertMatchWindow(c: PoolClient, matchId: number, seconds: number
   const m = rows[0];
   if (!m) fail("match not found");
   if (m.status !== "ACTIVE") fail("This match is not running");
+
+  // Declined and never-answered players keep their match_players row, so loading a wallet
+  // isn't proof of a seat — only JOINED is.
+  const { rows: mp } = await c.query(
+    `SELECT 1 FROM match_players WHERE match_id = $1 AND user_id = $2 AND state = 'JOINED'`,
+    [matchId, userId]
+  );
+  if (!mp[0]) fail("you are not in this match");
   const remaining = (new Date(m.ends_at).getTime() - Date.now()) / 1000;
   if (remaining <= MATCH_EXPIRY_MARGIN_SECONDS) fail("The match is about to end");
   if (seconds > remaining - MATCH_EXPIRY_MARGIN_SECONDS)
@@ -111,7 +124,7 @@ export async function createCard(input: CreateInput): Promise<Res> {
     const collateral = input.kind === "SELL" ? collateralFor(strike, amount) : 0;
 
     return await tx(async (c) => {
-      if (matchId !== null) await assertMatchWindow(c, matchId, input.seconds);
+      if (matchId !== null) await assertMatchWindow(c, matchId, me.id, input.seconds);
       else await spendEnergy(c, me.id, CFG.OPTION_ENERGY_COST);
 
       const w = await loadWallet(c, me.id, matchId);

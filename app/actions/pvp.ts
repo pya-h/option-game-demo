@@ -5,7 +5,7 @@ import { GameError, fail, q, tx } from "@/lib/db";
 import { spendEnergy } from "@/lib/energy";
 import { getPrices } from "@/lib/prices";
 import { requireMe } from "@/lib/session";
-import { finalizeMatchInTx } from "@/lib/settle";
+import { SETTLE_LOCK_KEY, finalizeMatchInTx } from "@/lib/settle";
 
 type Res = { ok: boolean; message?: string; matchId?: number };
 
@@ -192,6 +192,10 @@ export async function endMatchNow(matchId: number): Promise<Res> {
     const me = await requireMe();
     const prices = await getPrices();
     return await tx(async (c) => {
+      // The settler locks card rows before match rows; this path would take them in the
+      // opposite order, so both sides serialise on the settle lock rather than deadlocking.
+      await c.query(`SELECT pg_advisory_xact_lock($1)`, [SETTLE_LOCK_KEY]);
+
       const { rows } = await c.query(`SELECT * FROM matches WHERE id = $1 FOR UPDATE`, [matchId]);
       const m = rows[0];
       if (!m) fail("match not found");

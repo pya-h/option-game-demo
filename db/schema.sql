@@ -9,7 +9,7 @@ DROP TABLE IF EXISTS users CASCADE;
 
 CREATE TABLE users (
   id                SERIAL PRIMARY KEY,
-  username          TEXT NOT NULL UNIQUE,
+  username          TEXT NOT NULL,
   opt               NUMERIC(20,6) NOT NULL DEFAULT 0,
   portfolio         NUMERIC(20,6) NOT NULL DEFAULT 0,
   locked            NUMERIC(20,6) NOT NULL DEFAULT 0,
@@ -21,6 +21,11 @@ CREATE TABLE users (
   CONSTRAINT users_locked_within_portfolio CHECK (locked <= portfolio),
   CONSTRAINT users_no_negative CHECK (opt >= 0 AND portfolio >= 0 AND locked >= 0)
 );
+
+-- Sign-in looks accounts up case-insensitively, so uniqueness has to match. A plain UNIQUE on
+-- username would let two concurrent signups for "Bob" and "bob" both land, after which the
+-- lookup picks between them arbitrarily.
+CREATE UNIQUE INDEX users_username_lower_idx ON users (lower(username));
 
 CREATE TABLE matches (
   id           SERIAL PRIMARY KEY,

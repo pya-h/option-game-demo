@@ -25,6 +25,15 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
   );
   if (!match) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  // A match is a sealed economy, and this payload carries every player's balances, positions
+  // and standings. Only someone with a seat at the table gets to read it — including anyone
+  // who declined, so their lobby list still resolves.
+  const [seat] = await q<{ one: number }>(
+    `SELECT 1 AS one FROM match_players WHERE match_id = $1 AND user_id = $2`,
+    [matchId, uid]
+  );
+  if (!seat) return NextResponse.json({ error: "not in this match" }, { status: 403 });
+
   const players = await q(
     `SELECT mp.user_id, u.username, mp.state, mp.pvp_opt, mp.pvp_portfolio, mp.pvp_locked, mp.final_rank
        FROM match_players mp JOIN users u ON u.id = mp.user_id
