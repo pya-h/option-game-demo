@@ -36,7 +36,8 @@ const { settleDue } = await import("@/lib/settle.ts");
 const { createCardFor, exerciseCardFor, listCardFor, acquireCardFor } = await import(
   "@/lib/game/cards.ts"
 );
-const { convertPortfolioToOptFor, buyEnergyChargeFor } = await import("@/lib/game/store.ts");
+const { convertPortfolioToOptFor, buyEnergyChargeFor, buyEnergyCellFor, buyCapacityChipFor } =
+  await import("@/lib/game/store.ts");
 const { createMatchFor, respondInviteFor, startMatchFor, endMatchNowFor } = await import(
   "@/lib/game/pvp.ts"
 );
@@ -104,7 +105,10 @@ function log(who, what, res) {
 // ---------------------------------------------------------------- state reads
 
 const players = async () =>
-  q(`SELECT id, username, opt, portfolio, locked, energy, xp FROM users ORDER BY id`);
+  q(
+    `SELECT id, username, opt, portfolio, locked, energy, energy_capacity, xp
+       FROM users ORDER BY id`
+  );
 
 const myCards = (id, status) =>
   q(
@@ -176,9 +180,27 @@ async function actConvert(p) {
   return true;
 }
 
+/**
+ * Buys something from the Energy shop. Picks across all three so the soak test exercises the
+ * capacity paths too — those are the ones that touch the accrual clock, and a bug there is
+ * invisible until much later, when the bar refills out of nowhere.
+ */
 async function actStore(p) {
-  const res = await buyEnergyChargeFor(p.id);
-  log(p.username, "recharge", res);
+  const free = Number(p.portfolio) - Number(p.locked);
+  const room = Number(p.energy) < Number(p.energy_capacity);
+  const choices = [
+    // A Charge on a full bar is refused, so don't offer it — the point is to exercise the
+    // paths, not to collect rejections.
+    ...(room
+      ? [{ name: "recharge", run: () => buyEnergyChargeFor(p.id), cost: CFG.ENERGY_CHARGE_PRICE }]
+      : []),
+    { name: "chip", run: () => buyCapacityChipFor(p.id), cost: CFG.ENERGY_CAPACITY_PRICES[0] },
+    { name: "cell", run: () => buyEnergyCellFor(p.id), cost: CFG.ENERGY_CELL_PRICES[0] },
+  ].filter((c) => free >= c.cost);
+  if (!choices.length) return false;
+
+  const choice = pick(choices);
+  log(p.username, choice.name, await choice.run());
   return true;
 }
 
@@ -297,7 +319,9 @@ async function optionsFor(p) {
   if (unlisted.length) opts.push([actList, 18]);
   if (open.length && free > 50) opts.push([actBuy, 16]);
   if (free > 50) opts.push([actConvert, 10]);
-  if (Number(p.energy) < CFG.INITIAL_ENERGY_CAPACITY / 2 && free > CFG.ENERGY_CHARGE_PRICE)
+  // Affording the cheapest thing on the shelf is enough — actStore picks among whatever the
+  // player can actually buy, so capacity upgrades get exercised as well as refills.
+  if (free > Math.min(CFG.ENERGY_CHARGE_PRICE, CFG.ENERGY_CAPACITY_PRICES[0]))
     opts.push([actStore, 6]);
   return opts;
 }

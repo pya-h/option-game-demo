@@ -16,6 +16,7 @@ export type PublicCfg = {
   exercisePayoutMode: "market" | "strike";
   portfolioToOptRatio: number;
   energyCellPrices: number[];
+  energyCapacityPrices: number[];
   energyCellStep: number;
   energyChargePrice: number;
   pvpInitialOpt: number;
@@ -36,6 +37,7 @@ export function publicCfg(): PublicCfg {
     exercisePayoutMode: CFG.EXERCISE_PAYOUT_MODE,
     portfolioToOptRatio: CFG.PORTFOLIO_TO_OPT_RATIO,
     energyCellPrices: CFG.ENERGY_CELL_PRICES,
+    energyCapacityPrices: CFG.ENERGY_CAPACITY_PRICES,
     energyCellStep: CFG.ENERGY_CELL_STEP,
     energyChargePrice: CFG.ENERGY_CHARGE_PRICE,
     pvpInitialOpt: CFG.PVP_INITIAL_OPT,

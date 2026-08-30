@@ -1,9 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { BatteryCharging, Recycle, Zap } from "lucide-react";
+import { BatteryCharging, Battery, Recycle, Zap } from "lucide-react";
 import { useState } from "react";
-import { buyEnergyCell, buyEnergyCharge, convertPortfolioToOpt } from "@/app/actions/store";
+import {
+  buyCapacityChip,
+  buyEnergyCell,
+  buyEnergyCharge,
+  convertPortfolioToOpt,
+} from "@/app/actions/store";
 import { useGame } from "@/components/GameProvider";
 import { num, usd } from "@/lib/fmt";
 
@@ -21,9 +26,18 @@ export default function StorePage() {
     0,
     Math.round((me.energy_capacity - cfg.initialEnergyCapacity) / cfg.energyCellStep)
   );
-  const cellPrice = cfg.energyCellPrices[tier];
   const maxed = tier >= cfg.energyCellPrices.length;
+  // Guarded rather than indexed blind: at max tier there is no next price, and `spendable <
+  // undefined` is quietly false, which would leave the button enabled on a purchase that
+  // cannot happen.
+  const cellPrice = maxed ? null : cfg.energyCellPrices[tier];
+  const chipPrice = maxed ? null : cfg.energyCapacityPrices[tier];
   const full = me.energy >= me.energy_capacity;
+  const nextCap = me.energy_capacity + cfg.energyCellStep;
+  // What the bundle saves against buying the two pieces separately.
+  const saving = cellPrice !== null && chipPrice !== null
+    ? chipPrice + cfg.energyChargePrice - cellPrice
+    : 0;
 
   return (
     <div className="space-y-4">
@@ -35,34 +49,65 @@ export default function StorePage() {
         </p>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Energy Cell */}
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        {/* Energy Cell — capacity + refill, the bundle */}
         <Item
           icon={Zap}
           tone="from-amber-400 to-orange-500"
           title="Energy Cell"
-          subtitle="Permanent capacity upgrade"
+          subtitle="Capacity +, and charged to full"
+          badge={saving > 0 ? `save ${usd(saving, 0)}` : undefined}
         >
           <div className="mb-3 flex items-center justify-center gap-3 font-mono text-lg">
-            <span className="text-mute">{me.energy_capacity}</span>
+            <span className="text-mute">
+              {Math.floor(me.energy)} / {me.energy_capacity}
+            </span>
             <span className="text-gold">→</span>
-            <span className="text-gold">{me.energy_capacity + cfg.energyCellStep}</span>
+            <span className="text-gold">
+              {nextCap} / {nextCap}
+            </span>
           </div>
           <p className="mb-3 text-center text-[11px] text-mute">
             {maxed
               ? "You've installed every cell available."
-              : `Tier ${tier + 1} of ${cfg.energyCellPrices.length}`}
+              : `Tier ${tier + 1} of ${cfg.energyCellPrices.length} · both upgrades in one`}
           </p>
           <button
             className="btn btn-gold w-full"
-            disabled={busy || maxed || me.spendable < cellPrice}
+            disabled={busy || cellPrice === null || me.spendable < cellPrice}
             onClick={() => run(() => buyEnergyCell())}
           >
-            {maxed ? "Max capacity" : `Upgrade · ${usd(cellPrice, 0)}`}
+            {cellPrice === null ? "Max capacity" : `Install · ${usd(cellPrice, 0)}`}
           </button>
         </Item>
 
-        {/* Energy Charge */}
+        {/* Capacity Chip — the ceiling only */}
+        <Item
+          icon={Battery}
+          tone="from-violet-400 to-fuchsia-500"
+          title="Capacity Chip"
+          subtitle="Raises the ceiling only"
+        >
+          <div className="mb-3 flex items-center justify-center gap-3 font-mono text-lg">
+            <span className="text-mute">{me.energy_capacity}</span>
+            <span className="text-sell">→</span>
+            <span className="text-sell">{nextCap}</span>
+          </div>
+          <p className="mb-3 text-center text-[11px] text-mute">
+            {maxed
+              ? "Capacity is already at its maximum."
+              : "The new slots fill at the usual rate — no top-up."}
+          </p>
+          <button
+            className="btn btn-sell w-full"
+            disabled={busy || chipPrice === null || me.spendable < chipPrice}
+            onClick={() => run(() => buyCapacityChip())}
+          >
+            {chipPrice === null ? "Max capacity" : `Fit · ${usd(chipPrice, 0)}`}
+          </button>
+        </Item>
+
+        {/* Energy Charge — the bar only */}
         <Item
           icon={BatteryCharging}
           tone="from-cyan-400 to-blue-500"
@@ -135,12 +180,14 @@ function Item({
   tone,
   title,
   subtitle,
+  badge,
   children,
 }: {
   icon: any;
   tone: string;
   title: string;
   subtitle: string;
+  badge?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -150,10 +197,17 @@ function Item({
       whileHover={{ y: -4 }}
       className="panel panel-hi foil flex flex-col p-5"
     >
-      <div
-        className={`mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br ${tone} text-black shadow-lg`}
-      >
-        <Icon size={22} />
+      <div className="mb-3 flex items-start">
+        <div
+          className={`grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br ${tone} text-black shadow-lg`}
+        >
+          <Icon size={22} />
+        </div>
+        {badge && (
+          <span className="ml-auto rounded-full bg-mint/15 px-2 py-0.5 text-[10px] font-semibold text-mint">
+            {badge}
+          </span>
+        )}
       </div>
       <h2 className="font-semibold">{title}</h2>
       <p className="mb-4 text-xs text-mute">{subtitle}</p>

@@ -61,9 +61,15 @@ export const CFG = {
   PVP_WIN_OPT_REWARD: num("PVP_WIN_OPT_REWARD", 300),
   PVP_WIN_PORTFOLIO_REWARD: num("PVP_WIN_PORTFOLIO_REWARD", 250),
 
-  // Scaled to the 50-point bar: +2 per cell would have been noise against it, and a full
-  // refill is worth five times what it was.
-  ENERGY_CELL_PRICES: list("ENERGY_CELL_PRICES", [600, 1100, 1800, 2800]),
+  // Three ways to buy Energy, so the choice is a real one rather than a single upgrade path.
+  // A Capacity Chip raises the ceiling. A Charge fills what you already have. An Energy Cell
+  // does both and is priced below the two bought separately — every tier saves $100, which is
+  // what makes it a bundle rather than just the expensive option.
+  //
+  // Both upgrades share one tier index, derived from how far capacity sits above the starting
+  // value, so buying either advances the price of the next one.
+  ENERGY_CELL_PRICES: list("ENERGY_CELL_PRICES", [700, 1100, 1700, 2500]),
+  ENERGY_CAPACITY_PRICES: list("ENERGY_CAPACITY_PRICES", [400, 800, 1400, 2200]),
   ENERGY_CELL_STEP: num("ENERGY_CELL_STEP", 10),
   ENERGY_CHARGE_PRICE: num("ENERGY_CHARGE_PRICE", 400),
 };
