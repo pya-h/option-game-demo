@@ -2,8 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, Radar, Users, X, Zap } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { joinQueue, leaveQueue } from "@/app/actions/matchmaking";
 import { GROUP_SIZES, MATCH_DURATIONS } from "@/lib/config";
 import { duration as fmtDuration } from "@/lib/fmt";
@@ -16,7 +15,6 @@ import { useGame } from "./GameProvider";
  */
 export default function QuickMatch() {
   const { state, run, busy } = useGame();
-  const router = useRouter();
 
   const [mode, setMode] = useState<"DUEL" | "GROUP">("DUEL");
   const [size, setSize] = useState(3);
@@ -26,18 +24,9 @@ export default function QuickMatch() {
   const queue = state?.queue ?? null;
   const cost = state?.cfg.pvpEnergyCost ?? 0;
   const energy = state?.me.energy ?? 0;
-  const wasQueued = useRef(false);
 
-  // A matchmade player is dropped straight into a running match without clicking anything,
-  // so the only signal is the queue entry vanishing and a live match appearing.
-  useEffect(() => {
-    if (queue) wasQueued.current = true;
-    else if (wasQueued.current) {
-      wasQueued.current = false;
-      if (state?.liveMatchId) router.push(`/pvp/${state.liveMatchId}`);
-    }
-  }, [queue, state?.liveMatchId, router]);
-
+  // Being taken to the match once it forms is LiveMatchBar's job — it's mounted in the layout,
+  // so it still works for a player who wandered off this page while searching.
   useEffect(() => {
     if (!queue) return setElapsed(0);
     const start = new Date(queue.queuedAt).getTime();

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { GameProvider } from "@/components/GameProvider";
 import Confetti from "@/components/Confetti";
+import LiveMatchBar from "@/components/LiveMatchBar";
 import Nav from "@/components/Nav";
 import PriceTicker from "@/components/PriceTicker";
 import ResourceBar from "@/components/ResourceBar";
@@ -14,6 +15,7 @@ export default async function GameLayout({ children }: { children: React.ReactNo
     <GameProvider>
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-16">
         <Nav />
+        <LiveMatchBar />
         <PriceTicker />
         <ResourceBar />
         <main className="mt-5 flex-1">{children}</main>
