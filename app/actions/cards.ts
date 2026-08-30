@@ -27,8 +27,9 @@ export async function createCard(input: CreateInput): Promise<Res> {
   return createCardFor((await requireMe()).id, input);
 }
 
-export async function exerciseCard(cardId: number): Promise<Res> {
-  return exerciseCardFor((await requireMe()).id, cardId);
+/** `fund` opts into burning Portfolio to cover a shortfall — never implicit, it costs rank. */
+export async function exerciseCard(cardId: number, fund = false): Promise<Res> {
+  return exerciseCardFor((await requireMe()).id, cardId, { fund });
 }
 
 export async function listCard(cardId: number, ask?: number | null): Promise<Res> {

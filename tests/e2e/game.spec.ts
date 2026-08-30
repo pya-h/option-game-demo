@@ -75,6 +75,74 @@ test("a Buy card above its strike settles WON, awards XP, and can be exercised",
   expect(done.me.portfolio).toBeCloseTo(120 * Number(card.amount), 4);
 });
 
+test("a win too big to afford can be funded at the click, and only when asked", async ({
+  page,
+  request,
+}) => {
+  await signIn(page, "alice");
+  await fund(page, 200_000);
+
+  // Deliberately larger than the OPT balance can cover: exercising burns the whole notional,
+  // not just the profit, which is what strands most real wins.
+  await page.click('button:has-text("BTC")');
+  await page.locator('input[type="range"]').fill("-10");
+  await page.locator('input[type="number"]').first().fill("60");
+  await page.click('button:has-text("Mint BUY Option")');
+  await page.waitForSelector("text=/Card #\\d+ minted/");
+
+  await setPrices(request, { BTC: 120 });
+  await expireCards(request);
+  await page.reload();
+  await expect.poll(async () => (await state(page)).cards[0].status).toBe("WON");
+
+  const before = await state(page);
+  const card = before.cards[0];
+  const cost = Number(card.strike) * Number(card.amount) * CFG.EXERCISE_OPT_PER_DOLLAR;
+  expect(before.me.opt).toBeLessThan(cost); // the trap this exists to solve
+
+  await page.goto("/cards");
+  // Nothing happens on the first click: burning Portfolio costs the exact number the
+  // leaderboard ranks on, so it is never implicit.
+  await page.click('button:has-text("to cover?")');
+  expect((await state(page)).cards[0].status).toBe("WON");
+
+  await page.click('button:has-text("Burn & exercise")');
+  await expect(page.getByText(/burned \$.* to cover/)).toBeVisible();
+
+  const after = await state(page);
+  expect(after.cards[0].status).toBe("EXERCISED");
+
+  // The burn is sized to exactly cover the gap, so almost no OPT is left stranded.
+  const burned = before.me.portfolio + 120 * Number(card.amount) - after.me.portfolio;
+  expect(burned).toBeCloseTo((cost - before.me.opt) / CFG.PORTFOLIO_TO_OPT_RATIO, 1);
+  expect(after.me.opt).toBeLessThan(CFG.PORTFOLIO_TO_OPT_RATIO); // change from the rounding, no more
+});
+
+test("funding is refused when the Portfolio to cover it is locked as collateral", async ({
+  page,
+  request,
+}) => {
+  await signIn(page, "alice");
+  await mint(page, { kind: "BUY", strikePct: -10 });
+  await setPrices(request, { BTC: 120 });
+  await expireCards(request);
+  await page.reload();
+  await expect.poll(async () => (await state(page)).cards[0].status).toBe("WON");
+
+  // A fresh player has no Portfolio at all, so there is nothing free to burn and the offer
+  // is never made — the button says what is missing instead of promising a way out.
+  const s = await state(page);
+  expect(s.me.spendable).toBe(0);
+
+  await page.goto("/cards");
+  const card = s.cards[0];
+  const cost = Number(card.strike) * Number(card.amount) * CFG.EXERCISE_OPT_PER_DOLLAR;
+  if (s.me.opt < cost) {
+    await expect(page.getByText(/more OPT/)).toBeVisible();
+    await expect(page.getByText(/to cover\?/)).toHaveCount(0);
+  }
+});
+
 test("a Buy card below its strike settles LOST and awards nothing", async ({ page, request }) => {
   await signIn(page, "alice");
   await mint(page, { kind: "BUY", strikePct: 10 });

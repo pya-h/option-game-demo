@@ -166,7 +166,31 @@ export async function createCardFor(userId: number, input: CreateInput): Promise
   });
 }
 
-export async function exerciseCardFor(userId: number, cardId: number): Promise<Res> {
+/**
+ * Portfolio that has to be burned to cover a shortfall of `needOpt`, rounded up to the cent so
+ * the conversion can never land a fraction short of the cost it was sized for.
+ */
+export function fundingCost(needOpt: number) {
+  return Math.ceil((needOpt / CFG.PORTFOLIO_TO_OPT_RATIO) * 100) / 100;
+}
+
+/**
+ * Exercises a winning Buy Option.
+ *
+ * `fund` covers a shortfall by burning Portfolio into OPT first, in this same transaction.
+ * Exercising costs the whole notional in OPT rather than just the profit, which is faithful to
+ * a physically settled call but leaves most wins unaffordable — the player is rich in the
+ * dollars they won and poor in the currency needed to collect them. This is exactly the
+ * existing Portfolio->OPT conversion followed by the existing exercise, so it moves no rate
+ * and opens no arbitrage; it only saves the player from doing the two by hand and stranding
+ * the card if they misjudge the amount. It still costs real leaderboard position, so it is
+ * never implicit: the caller has to ask for it.
+ */
+export async function exerciseCardFor(
+  userId: number,
+  cardId: number,
+  opts: { fund?: boolean } = {}
+): Promise<Res> {
   return guard(async () => {
     const me = { id: userId };
     return await tx(async (c) => {
@@ -193,8 +217,29 @@ export async function exerciseCardFor(userId: number, cardId: number): Promise<R
       const payout = exercisePayout(card.strike, card.amount, card.settle_price);
 
       const w = await loadWallet(c, me.id, card.match_id);
-      if (w.opt < cost)
-        fail(`Exercising costs ${Math.ceil(cost)} OPT — you have ${Math.floor(w.opt)}`);
+      let burned = 0;
+      if (w.opt < cost) {
+        if (!opts.fund)
+          fail(`Exercising costs ${Math.ceil(cost)} OPT — you have ${Math.floor(w.opt)}`);
+
+        // Sized here, never taken from the client: the shortfall is whatever it is under this
+        // row lock, which is not necessarily what the button last rendered.
+        burned = fundingCost(cost - w.opt);
+        if (w.spendable < burned)
+          fail(
+            `Covering this needs $${burned.toFixed(2)} of free Portfolio — you have $${w.spendable.toFixed(2)}`
+          );
+        await applyWallet(c, me.id, card.match_id, {
+          portfolio: -burned,
+          opt: burned * CFG.PORTFOLIO_TO_OPT_RATIO,
+        });
+        await logEvent(c, cardId, "FUNDED", {
+          actor: me.id,
+          opt: burned * CFG.PORTFOLIO_TO_OPT_RATIO,
+          portfolio: -burned,
+          note: `burned $${burned.toFixed(2)} Portfolio to cover the exercise cost`,
+        });
+      }
 
       await applyWallet(c, me.id, card.match_id, { opt: -cost, portfolio: payout });
       await c.query(`UPDATE cards SET status = 'EXERCISED' WHERE id = $1`, [cardId]);
@@ -205,7 +250,13 @@ export async function exerciseCardFor(userId: number, cardId: number): Promise<R
         note: `burned ${cost.toFixed(0)} OPT for $${payout.toFixed(2)} Portfolio`,
       });
 
-      return { ok: true, message: `Exercised · −${cost.toFixed(0)} OPT · +$${payout.toFixed(0)} Portfolio` };
+      const net = payout - burned;
+      return {
+        ok: true,
+        message: burned
+          ? `Exercised · burned $${burned.toFixed(0)} to cover · net +$${net.toFixed(0)} Portfolio`
+          : `Exercised · −${cost.toFixed(0)} OPT · +$${payout.toFixed(0)} Portfolio`,
+      };
     });
   });
 }

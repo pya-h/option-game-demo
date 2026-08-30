@@ -217,6 +217,16 @@ be gamed by waiting.
   `loss = min((settle_price − strike) × amount, collateral)`, capped so a player can never go
   negative.
 
+**Funding an exercise.** Exercising burns the *whole notional* in OPT, not just the profit —
+faithful to a physically settled call, and the reason a player is routinely rich in the dollars
+they won and poor in the currency needed to collect them. When OPT is short, the button offers
+to burn the gap out of Portfolio first and exercise in the same transaction. It is the existing
+`Portfolio → OPT` conversion followed by the existing exercise, so it moves no rate and opens no
+arbitrage; it only saves the player from doing the two by hand and stranding the card if they
+misjudge the amount. It is never implicit — burning Portfolio costs the exact number the
+leaderboard ranks on, so the button asks first, and the server re-sizes the burn under a row
+lock rather than trusting the figure the client rendered.
+
 ### One interpretation worth flagging
 
 `IDEA.md` §4 describes exercising as burning OPT for `strike × amount` and receiving `strike ×

@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles, Tag, TagIcon, X } from "lucide-react";
+import { Flame, Sparkles, Tag, TagIcon, X } from "lucide-react";
 import { useState } from "react";
 import { acquireCard, cardHistory, exerciseCard, listCard, unlistCard } from "@/app/actions/cards";
 import { CFG } from "@/lib/config";
@@ -75,26 +75,22 @@ export default function CardGrid({
             // actually runs on. The fallback is the shared default rather than 1: state can
             // still be loading here (a match room polls on its own clock), and quoting a cost
             // five times too cheap would enable a button the server then refuses.
-            const cost =
-              card.strike * card.amount * (state?.cfg.exerciseOptPerDollar ?? CFG.EXERCISE_OPT_PER_DOLLAR);
+            const rate = state?.cfg.exerciseOptPerDollar ?? CFG.EXERCISE_OPT_PER_DOLLAR;
+            const ratio = state?.cfg.portfolioToOptRatio ?? CFG.PORTFOLIO_TO_OPT_RATIO;
+            const cost = card.strike * card.amount * rate;
             const payout =
               mode === "strike" ? card.strike * card.amount : (card.settle_price ?? 0) * card.amount;
             actions = (
-              <button
-                className="btn btn-gold flex-1 py-1.5 text-xs"
-                disabled={busy || optBal < cost}
-                // The card frame is narrower than the old panel, so the full breakdown moves
-                // to the tooltip and the button states the outcome.
-                title={
-                  optBal < cost
-                    ? `Need ${Math.ceil(cost)} OPT`
-                    : `Burn ${Math.ceil(cost)} OPT for ${usd(payout, 2)} Portfolio`
-                }
-                onClick={() => run(() => exerciseCard(card.id))}
-              >
-                <Sparkles size={12} className="mr-1 inline" />
-                Exercise · +{usd(payout, 0)}
-              </button>
+              <Exercise
+                card={card}
+                cost={cost}
+                payout={payout}
+                optBal={optBal}
+                free={free}
+                ratio={ratio}
+                busy={busy}
+                onRun={(fund) => run(() => exerciseCard(card.id, fund))}
+              />
             );
           } else if (!readOnly && !mine && live && card.for_sale) {
             const isBuy = card.kind === "BUY";
@@ -148,6 +144,102 @@ export default function CardGrid({
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+/**
+ * The exercise control on a winning card.
+ *
+ * Exercising burns the whole notional in OPT, not just the profit, so a player is routinely
+ * rich in the dollars they won and poor in the currency needed to collect them. Rather than
+ * dead-ending there, the button offers to burn the shortfall out of Portfolio first — but that
+ * costs the exact number the leaderboard ranks on, so it asks before it does it. The server
+ * re-sizes the burn under a row lock; these figures are only what the player is shown.
+ */
+function Exercise({
+  card,
+  cost,
+  payout,
+  optBal,
+  free,
+  ratio,
+  busy,
+  onRun,
+}: {
+  card: CardDTO;
+  cost: number;
+  payout: number;
+  optBal: number;
+  free: number;
+  ratio: number;
+  busy: boolean;
+  onRun: (fund: boolean) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const short = optBal < cost;
+  const burn = short ? Math.ceil(((cost - optBal) / ratio) * 100) / 100 : 0;
+  const canFund = short && free >= burn;
+
+  if (!short) {
+    return (
+      <button
+        className="btn btn-gold flex-1 py-1.5 text-xs"
+        disabled={busy}
+        title={`Burn ${Math.ceil(cost)} OPT for ${usd(payout, 2)} Portfolio`}
+        onClick={() => onRun(false)}
+      >
+        <Sparkles size={12} className="mr-1 inline" />
+        Exercise · +{usd(payout, 0)}
+      </button>
+    );
+  }
+
+  if (!canFund) {
+    return (
+      <button
+        className="btn btn-ghost flex-1 py-1.5 text-[11px]"
+        disabled
+        title={`Needs ${Math.ceil(cost)} OPT, or ${usd(burn, 2)} of free Portfolio to cover the gap — you have ${usd(free, 2)} free`}
+      >
+        Need {Math.ceil(cost - optBal)} more OPT
+      </button>
+    );
+  }
+
+  if (!confirming) {
+    return (
+      <button
+        className="btn btn-ghost flex-1 border-gold/50 py-1.5 text-[11px] text-gold"
+        disabled={busy}
+        title={`Short ${Math.ceil(cost - optBal)} OPT · burning ${usd(burn, 2)} Portfolio covers it`}
+        onClick={() => setConfirming(true)}
+      >
+        <Flame size={11} className="mr-1 inline" />
+        Burn {usd(burn, 0)} to cover?
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 items-center gap-1.5">
+      <button
+        className="btn btn-ghost px-2 py-1.5 text-[11px]"
+        onClick={() => setConfirming(false)}
+      >
+        <X size={11} />
+      </button>
+      <button
+        className="btn btn-gold flex-1 py-1.5 text-[11px]"
+        disabled={busy}
+        title={`Burns ${usd(burn, 2)} Portfolio into ${Math.ceil(burn * ratio)} OPT, then exercises card #${card.id}`}
+        onClick={() => {
+          setConfirming(false);
+          onRun(true);
+        }}
+      >
+        Burn &amp; exercise · net +{usd(payout - burn, 0)}
+      </button>
+    </div>
   );
 }
 
