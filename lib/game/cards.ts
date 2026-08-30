@@ -233,6 +233,10 @@ export async function listCardFor(userId: number, cardId: number, ask?: number |
       if (card.owner_id !== me.id) fail("you don't own this card");
       if (card.status !== "ACTIVE") fail("only active cards can be listed");
       if (card.for_sale) fail("this card is already listed");
+      // A card stays ACTIVE until a poll settles it, so it can be past its expiry right now.
+      // Listing one creates an offer nobody can accept — acquireCard rejects it on sight —
+      // and prices it at the floor, since an expired card has no value left to quote.
+      if (new Date(card.expires_at).getTime() <= Date.now()) fail("this card is already expiring");
 
       let price = custom;
       if (price === null) {

@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "db:push:test": "node scripts/push.mjs --test"
+    "db:push:test": "node scripts/push.mjs --test",
+    "simulate": "node scripts/simulate.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.23.12",
