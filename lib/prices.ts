@@ -3,6 +3,13 @@ import { q } from "./db";
 
 const TTL_MS = 15_000;
 
+/**
+ * With PRICE_SOURCE=fixed the upstream APIs are never called and price_cache is treated as
+ * authoritative however old it is. Tests set prices directly and assert on outcomes that
+ * would otherwise depend on the live market; nothing else should ever turn this on.
+ */
+const FIXED = process.env.PRICE_SOURCE === "fixed";
+
 export type PriceRow = { asset: AssetSymbol; price: number; prev_price: number; updated_at: string };
 
 let inflight: Promise<void> | null = null;
@@ -72,8 +79,9 @@ async function refresh() {
 export async function getPrices(): Promise<Record<AssetSymbol, PriceRow>> {
   let rows = await q<PriceRow>(`SELECT * FROM price_cache`);
   const stale =
-    rows.length < ASSETS.length ||
-    rows.some((r) => Date.now() - new Date(r.updated_at).getTime() > TTL_MS);
+    !FIXED &&
+    (rows.length < ASSETS.length ||
+      rows.some((r) => Date.now() - new Date(r.updated_at).getTime() > TTL_MS));
 
   if (stale) {
     // Collapse concurrent refreshes into one upstream call.
