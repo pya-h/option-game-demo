@@ -164,7 +164,7 @@ test("a Capacity Chip raises the ceiling without refilling the bar", async ({ pa
 
   await page.goto("/store");
   await page.click('button:has-text("Fit ·")');
-  await expect(page.getByText(/capacity upgraded/)).toBeVisible();
+  await expect(page.getByText(/Energy capacity upgraded to \d+/)).toBeVisible();
 
   const after = await state(page);
   expect(after.me.energy_capacity).toBe(before.me.energy_capacity + after.cfg.energyCellStep);
@@ -187,7 +187,9 @@ test("an Energy Cell raises the ceiling and charges to it", async ({ page }) => 
   const before = await state(page);
   await page.goto("/store");
   await page.click('button:has-text("Install ·")');
-  await expect(page.getByText(/charged to full/)).toBeVisible();
+  // Matched on the toast's shape, not on the words alone — the shelf card's own subtitle
+  // describes the same thing and would otherwise match too.
+  await expect(page.getByText(/Capacity \d+ · charged to full/)).toBeVisible();
 
   const after = await state(page);
   expect(after.me.energy_capacity).toBe(before.me.energy_capacity + after.cfg.energyCellStep);
