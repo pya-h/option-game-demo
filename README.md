@@ -52,6 +52,10 @@ paired at random — 1v1, or a group of a size you pick. Players are only ever g
 who asked for the same size *and* the same length, so a 3-player queue never absorbs someone who
 wanted 5. Searching is free: Energy is charged at the instant a match forms, never for waiting.
 
+Because the queue is drained by whichever request happens to be polling, a match can form while
+you're anywhere in the app — so a strip in the header carries the search wherever you go and takes
+you into the arena the moment it starts.
+
 ---
 
 ## Stack
@@ -114,7 +118,7 @@ pnpm db:push:test  # once: create the throwaway e2e database
 pnpm test:e2e      # end-to-end (playwright)
 ```
 
-Unit tests cover the pricing model, the energy clock, and the exchange-rate identity. Integration
+Unit tests cover the pricing model, the energy clock, rarity and the exchange-rate identity. Integration
 tests exercise settlement against a real Postgres, each inside a transaction that is always rolled
 back — safe to point at your dev database. The e2e suite runs a production build against a separate
 `<database>_test`, with `PRICE_SOURCE=fixed` and test hooks (`E2E_HOOKS=1`, 404 otherwise) so a spec
@@ -151,10 +155,17 @@ PVP_WIN_OPT_REWARD=300
 PVP_WIN_PORTFOLIO_REWARD=250
 
 # --- Store ---
-ENERGY_CELL_PRICES=600,1100,1800,2800
+ENERGY_CELL_PRICES=700,1100,1700,2500      # capacity + a full charge
+ENERGY_CAPACITY_PRICES=400,800,1400,2200   # capacity only
 ENERGY_CELL_STEP=10
-ENERGY_CHARGE_PRICE=400
+ENERGY_CHARGE_PRICE=400                    # the bar only
 ```
+
+The Energy shop sells the two halves separately and together: a **Capacity Chip** raises the
+ceiling, an **Energy Charge** fills the bar, and an **Energy Cell** does both. Keep the Cell
+below `CAPACITY + CHARGE` at every tier, or the bundle is simply the expensive option and
+nobody would ever take it. Both upgrades share one tier index, derived from how far capacity
+sits above `INITIAL_ENERGY_CAPACITY`, so buying either raises the price of the next.
 
 ⚠️ **`PORTFOLIO_TO_OPT_RATIO`, `EXERCISE_OPT_PER_DOLLAR` and `PREMIUM_OPT_PER_DOLLAR` must stay
 equal.** They define one exchange rate between OPT and virtual dollars. If converting Portfolio to
@@ -189,6 +200,13 @@ expect to be precise.
 
 These live in `lib/config.ts` as plain constants rather than env vars because the pricing model runs
 on both the server and the client, and a client bundle can't read the server env.
+
+**Rarity.** Every card carries a grade — Common through Legendary — shown as stars and as the
+colour of its frame. It scores two things separately, so neither alone can max it: how much was
+staked (notional) and how bold the strike was (distance from spot). Both are frozen at mint, and
+`rarityOf` is given no access to the live price at all: a card that regraded itself as the market
+moved would be worthless as a collectible. It carries no mechanical weight — it renames and
+reframes what the card already shows, so it can never become a second, hidden economy.
 
 **Settlement.** At expiry the current spot is snapshotted into the card, so exercising later can't
 be gamed by waiting.
@@ -227,10 +245,12 @@ app/
   api/state        global poll — settles, then returns player + prices + cards + queue
   api/pvp/[id]/    match poll — settles, then returns match + players + match cards
   api/e2e/         test-only hooks; 404 unless E2E_HOOKS=1
-components/        OptionCard, CreateOptionPanel, CardGrid, MatchRoom, QuickMatch, …
+components/        OptionCard, CreateOptionPanel, CardGrid, MatchRoom, QuickMatch,
+                   LiveMatchBar, …
 lib/
   config.ts        every tunable knob
   options.ts       pricing + settlement maths
+  rarity.ts        the collectible grade on a card's frame
   settle.ts        expiry resolution + match finalisation + matchmaking pass
   wallet.ts        the single accessor for global vs PvP balances
   energy.ts        lazy regeneration
@@ -256,6 +276,6 @@ split also lets the simulation script drive exactly the code a player does.
 
 ## Known limits
 
-It's a demo, so: no passwords, no rate limiting, no historical price charts, no random matchmaking,
-desktop-first layout, and settlement uses the price at the moment the settler runs rather than a
-true historical close.
+It's a demo, so: no passwords, no rate limiting, no historical price charts, desktop-first
+layout, and settlement uses the price at the moment the settler runs rather than a true
+historical close.

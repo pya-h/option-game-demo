@@ -4,9 +4,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, Tag, TagIcon, X } from "lucide-react";
 import { useState } from "react";
 import { acquireCard, cardHistory, exerciseCard, listCard, unlistCard } from "@/app/actions/cards";
+import { CFG } from "@/lib/config";
 import { opt as fmtOpt, usd } from "@/lib/fmt";
 import { cardValue } from "@/lib/options";
 import type { CardDTO, CardEventDTO, PriceDTO } from "@/lib/types";
+import { useNow } from "./Countdown";
 import { useGame } from "./GameProvider";
 import OptionCard from "./OptionCard";
 
@@ -17,6 +19,7 @@ export default function CardGrid({
   spendable,
   optBalance,
   readOnly = false,
+  showDepth = false,
 }: {
   cards: CardDTO[];
   prices?: PriceDTO[];
@@ -24,10 +27,13 @@ export default function CardGrid({
   spendable?: number;
   optBalance?: number;
   readOnly?: boolean;
+  /** Marketplace view: rate each listing against what the engine says it's worth. */
+  showDepth?: boolean;
 }) {
   const { state, run, busy } = useGame();
   const [listing, setListing] = useState<CardDTO | null>(null);
-  const [history, setHistory] = useState<{ card: CardDTO; events: CardEventDTO[] } | null>(null);
+  // Card id -> its event log, loaded the first time that card is turned over.
+  const [logs, setLogs] = useState<Record<number, CardEventDTO[]>>({});
 
   const px = prices ?? state?.prices ?? [];
   const uid = meId ?? state?.me.id ?? 0;
@@ -35,16 +41,17 @@ export default function CardGrid({
   const optBal = optBalance ?? state?.me.opt ?? 0;
   const mode = state?.cfg.exercisePayoutMode ?? "market";
 
-  const openHistory = async (card: CardDTO) => {
+  const loadLog = async (card: CardDTO) => {
+    if (logs[card.id]) return;
     const events = await cardHistory(card.id);
-    setHistory({ card, events });
+    setLogs((m) => ({ ...m, [card.id]: events }));
   };
 
   if (!cards.length) return <p className="py-8 text-center text-sm text-mute">Nothing here yet.</p>;
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {cards.map((card, i) => {
           const spot = px.find((p) => p.asset === card.asset)?.price ?? 0;
           const mine = card.owner_id === uid;
@@ -64,20 +71,29 @@ export default function CardGrid({
               </button>
             );
           } else if (!readOnly && mine && card.status === "WON") {
-            // Mirrors lib/options exerciseCost/exercisePayout, but with the rates the
-            // server actually runs on rather than the client-side defaults.
-            const cost = card.strike * card.amount * (state?.cfg.exerciseOptPerDollar ?? 1);
+            // Mirrors lib/options exerciseCost/exercisePayout with the rates the server
+            // actually runs on. The fallback is the shared default rather than 1: state can
+            // still be loading here (a match room polls on its own clock), and quoting a cost
+            // five times too cheap would enable a button the server then refuses.
+            const cost =
+              card.strike * card.amount * (state?.cfg.exerciseOptPerDollar ?? CFG.EXERCISE_OPT_PER_DOLLAR);
             const payout =
               mode === "strike" ? card.strike * card.amount : (card.settle_price ?? 0) * card.amount;
             actions = (
               <button
                 className="btn btn-gold flex-1 py-1.5 text-xs"
                 disabled={busy || optBal < cost}
-                title={optBal < cost ? `Need ${Math.ceil(cost)} OPT` : undefined}
+                // The card frame is narrower than the old panel, so the full breakdown moves
+                // to the tooltip and the button states the outcome.
+                title={
+                  optBal < cost
+                    ? `Need ${Math.ceil(cost)} OPT`
+                    : `Burn ${Math.ceil(cost)} OPT for ${usd(payout, 2)} Portfolio`
+                }
                 onClick={() => run(() => exerciseCard(card.id))}
               >
                 <Sparkles size={12} className="mr-1 inline" />
-                Exercise · −{Math.ceil(cost)} OPT → +{usd(payout, 0)}
+                Exercise · +{usd(payout, 0)}
               </button>
             );
           } else if (!readOnly && !mine && live && card.for_sale) {
@@ -99,15 +115,21 @@ export default function CardGrid({
           }
 
           return (
-            <OptionCard
-              key={card.id}
-              card={card}
-              spot={spot}
-              meId={uid}
-              index={i}
-              actions={actions}
-              onHistory={() => openHistory(card)}
-            />
+            // Column, so the card fills the row's height and any depth strip hangs below it.
+            <div key={card.id} className="flex flex-col">
+              <OptionCard
+                card={card}
+                spot={spot}
+                meId={uid}
+                index={i}
+                actions={actions}
+                history={logs[card.id] ?? null}
+                onFlip={() => loadLog(card)}
+              />
+              {showDepth && live && card.for_sale && card.kind === "BUY" && (
+                <Depth card={card} spot={spot} />
+              )}
+            </div>
           );
         })}
       </div>
@@ -124,9 +146,60 @@ export default function CardGrid({
             }}
           />
         )}
-        {history && <HistoryDrawer {...history} onClose={() => setHistory(null)} />}
       </AnimatePresence>
     </>
+  );
+}
+
+/**
+ * How a listing's ask compares to what the engine says the card is worth right now.
+ *
+ * The For Sale board otherwise gives no way to tell a bargain from a rip-off: a price is just a
+ * number until you can see it against something. The comparison is the same `cardValue` the
+ * server prices with, so it's the honest one — and it moves with the market, which is the point:
+ * a fair ask can become a bargain without the seller touching it. Only for Buy cards; a Sell
+ * card's takeover premium is what the seller is willing to pay, and has no fair value.
+ */
+function Depth({ card, spot }: { card: CardDTO; spot: number }) {
+  const now = useNow();
+  if (!spot || !card.ask) return null;
+
+  const secondsLeft = Math.max(0, (new Date(card.expires_at).getTime() - now) / 1000);
+  const value = cardValue({
+    asset: card.asset,
+    strike: card.strike,
+    amount: card.amount,
+    spot,
+    secondsLeft,
+  }).total;
+  if (value <= 0) return null;
+
+  const ask = Number(card.ask);
+  const delta = ((ask - value) / value) * 100;
+  // A few percent either way is noise, not a signal — the value moves every poll.
+  const cheap = delta <= -5;
+  const dear = delta >= 5;
+
+  return (
+    <div
+      data-depth={cheap ? "under" : dear ? "over" : "fair"}
+      className={`mt-1.5 flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] ${
+        cheap
+          ? "border-mint/40 bg-mint/10 text-mint"
+          : dear
+            ? "border-danger/40 bg-danger/10 text-danger"
+            : "border-edge/70 bg-black/25 text-mute"
+      }`}
+    >
+      <span className="tabnum font-mono">{usd(ask, 0)}</span>
+      <span className="opacity-60">asked ·</span>
+      <span className="tabnum font-mono opacity-80">{usd(value, 0)}</span>
+      <span className="opacity-60">value</span>
+      <span className="tabnum ml-auto font-mono font-semibold">
+        {cheap ? "▼" : dear ? "▲" : "≈"} {Math.abs(delta).toFixed(0)}%
+        <span className="ml-1 opacity-70">{cheap ? "under" : dear ? "over" : "fair"}</span>
+      </span>
+    </div>
   );
 }
 
@@ -264,51 +337,6 @@ function ListDialog({
           {isBuy && !custom ? "List at live value" : "List it"}
         </button>
       </div>
-    </Shell>
-  );
-}
-
-function HistoryDrawer({
-  card,
-  events,
-  onClose,
-}: {
-  card: CardDTO;
-  events: CardEventDTO[];
-  onClose: () => void;
-}) {
-  return (
-    <Shell onClose={onClose}>
-      <div className="mb-3 flex items-center gap-2">
-        <h3 className="font-semibold">
-          Card #{card.id} · {card.asset} {card.kind}
-        </h3>
-        <button onClick={onClose} className="ml-auto text-mute hover:text-white">
-          <X size={16} />
-        </button>
-      </div>
-      <p className="mb-3 text-xs text-mute">
-        Ownership and premium history is public — see how compensation evolved.
-      </p>
-      <ol className="max-h-80 space-y-2 overflow-y-auto pr-1">
-        {events.map((e) => (
-          <li key={e.id} className="rounded-xl border border-edge/70 bg-black/25 px-3 py-2 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-mono font-semibold text-buy">{e.type}</span>
-              <span className="ml-auto text-[10px] text-mute">
-                {new Date(e.created_at).toLocaleTimeString()}
-              </span>
-            </div>
-            {(e.from_user || e.to_user) && (
-              <div className="mt-0.5 text-mute">
-                {e.from_user ?? "—"} → <span className="text-slate-200">{e.to_user ?? "—"}</span>
-              </div>
-            )}
-            {e.note && <div className="mt-0.5 text-slate-300">{e.note}</div>}
-          </li>
-        ))}
-        {!events.length && <li className="py-4 text-center text-mute">No events yet.</li>}
-      </ol>
     </Shell>
   );
 }

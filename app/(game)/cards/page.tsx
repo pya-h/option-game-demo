@@ -29,7 +29,7 @@ export default function CardsPage() {
   const hint = {
     mine: "Everything you own, live and resolved. Winning cards can be exercised; active ones can be listed.",
     all: "Every option alive in the game right now. Visible to everyone — but only cards the owner listed can be bought.",
-    sale: "Buy Options transfer for Portfolio Value. Sell Options transfer the obligation: you lock the collateral and collect the takeover premium.",
+    sale: "Buy Options transfer for Portfolio Value, rated against what the engine says they're worth. Sell Options transfer the obligation instead: you lock the collateral and collect the takeover premium.",
   }[tab];
 
   return (
@@ -57,7 +57,8 @@ export default function CardsPage() {
 
       <p className="text-xs leading-relaxed text-mute">{hint}</p>
 
-      <CardGrid cards={cards} />
+      {/* Only the marketplace rates asks against fair value — elsewhere there's no ask to rate. */}
+      <CardGrid cards={cards} showDepth={tab === "sale"} />
     </div>
   );
 }
