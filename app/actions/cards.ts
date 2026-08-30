@@ -152,6 +152,15 @@ export async function exerciseCard(cardId: number): Promise<Res> {
       if (card.kind !== "BUY") fail("only Buy Options can be exercised");
       if (card.status !== "WON") fail("only a winning card can be exercised");
 
+      // A finished match has already ranked its players, so moving PvP balances now would
+      // change a standing nobody can see. Match end auto-exercises whatever was affordable.
+      if (card.match_id !== null) {
+        const { rows: m } = await c.query(`SELECT status FROM matches WHERE id = $1 FOR SHARE`, [
+          card.match_id,
+        ]);
+        if (m[0]?.status !== "ACTIVE") fail("That match is over");
+      }
+
       const cost = exerciseCost(card.strike, card.amount);
       const payout = exercisePayout(card.strike, card.amount, card.settle_price);
 
@@ -201,6 +210,7 @@ export async function unlistCard(cardId: number): Promise<Res> {
       const { rows } = await c.query(`SELECT * FROM cards WHERE id = $1 FOR UPDATE`, [cardId]);
       if (!rows[0]) fail("card not found");
       if (rows[0].owner_id !== me.id) fail("you don't own this card");
+      if (!rows[0].for_sale) fail("this card is not listed");
       await c.query(`UPDATE cards SET for_sale = FALSE, ask = NULL WHERE id = $1`, [cardId]);
       await logEvent(c, cardId, "UNLISTED", { actor: me.id });
       return { ok: true, message: "Removed from the marketplace" };

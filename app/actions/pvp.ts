@@ -154,7 +154,11 @@ export async function pvpConvert(matchId: number, usdAmount: number): Promise<Re
     const me = await requireMe();
     if (!(usdAmount > 0) || !Number.isFinite(usdAmount)) fail("invalid amount");
     return await tx(async (c) => {
-      const { rows: m } = await c.query(`SELECT status FROM matches WHERE id = $1`, [matchId]);
+      // FOR SHARE, not a bare read: the settler finalises under FOR UPDATE on this row, so an
+      // unlocked check could pass and then convert into balances that were already ranked.
+      const { rows: m } = await c.query(`SELECT status FROM matches WHERE id = $1 FOR SHARE`, [
+        matchId,
+      ]);
       if (m[0]?.status !== "ACTIVE") fail("this match is not running");
 
       const { rows } = await c.query(

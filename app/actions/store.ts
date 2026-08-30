@@ -55,7 +55,12 @@ export async function buyEnergyCell(): Promise<Res> {
         [me.id]
       );
       const u = rows[0];
-      const tier = Math.round((u.energy_capacity - CFG.INITIAL_ENERGY_CAPACITY) / CFG.ENERGY_CELL_STEP);
+      // Clamped at 0: players created before an INITIAL_ENERGY_CAPACITY change sit below the
+      // new baseline, which would otherwise index the price table negatively and charge NaN.
+      const tier = Math.max(
+        0,
+        Math.round((u.energy_capacity - CFG.INITIAL_ENERGY_CAPACITY) / CFG.ENERGY_CELL_STEP)
+      );
       if (tier >= CFG.ENERGY_CELL_PRICES.length) fail("Maximum Energy capacity reached");
 
       const cost = CFG.ENERGY_CELL_PRICES[tier];
