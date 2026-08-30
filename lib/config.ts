@@ -125,4 +125,18 @@ export const DURATION_UNITS = [
   { label: "weeks", seconds: 604800 },
 ];
 
-export const MATCH_DURATIONS = [5, 10, 15, 30];
+/**
+ * Match length presets, in minutes, plus the bounds a custom length is clamped to. Unlike the
+ * main game a match is capped: it holds a sealed economy open and every card inside it has to
+ * resolve before the final whistle, so it can't run indefinitely.
+ */
+export const MATCH_DURATIONS = [5, 15, 30, 60, 120, 240];
+export const MIN_MATCH_MINUTES = 5;
+export const MAX_MATCH_MINUTES = 240;
+
+/**
+ * Gap an in-match option must leave between its expiry and the final whistle. A card settling
+ * in the same instant the match finalises would count or not depending on which transaction
+ * landed first; this makes the answer never depend on that race.
+ */
+export const MATCH_EXPIRY_MARGIN_SECONDS = 10;

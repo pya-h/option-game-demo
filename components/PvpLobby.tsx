@@ -7,7 +7,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { createMatch, respondInvite } from "@/app/actions/pvp";
 import type { LobbyRow } from "@/app/(game)/pvp/page";
-import { MATCH_DURATIONS } from "@/lib/config";
+import { MATCH_DURATIONS, MAX_MATCH_MINUTES, MIN_MATCH_MINUTES } from "@/lib/config";
+import { duration as fmtDuration } from "@/lib/fmt";
 import { useGame } from "./GameProvider";
 
 const STATUS = {
@@ -67,7 +68,7 @@ export default function PvpLobby({ rows, meId }: { rows: LobbyRow[]; meId: numbe
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-semibold">{r.name}</div>
                   <div className="text-[11px] text-mute">
-                    by {r.creator} · {r.duration_min} min · {r.roster}
+                    by {r.creator} · {fmtDuration(r.duration_min * 60)} · {r.roster}
                   </div>
                 </div>
                 <button
@@ -122,7 +123,8 @@ export default function PvpLobby({ rows, meId }: { rows: LobbyRow[]; meId: numbe
                       </span>
                     </div>
                     <div className="text-[11px] text-mute">
-                      {r.mode === "DUEL" ? "1v1" : "Group"} · {r.duration_min} min · {r.joined} joined
+                      {r.mode === "DUEL" ? "1v1" : "Group"} · {fmtDuration(r.duration_min * 60)} ·{" "}
+                      {r.joined} joined
                     </div>
                     <div className="mt-1 truncate text-[11px] text-slate-400">{r.roster}</div>
                     {r.status === "FINISHED" && r.my_rank && (
@@ -175,15 +177,30 @@ function CreateDialog({
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"DUEL" | "GROUP">("DUEL");
   const [name, setName] = useState("");
-  const [duration, setDuration] = useState(10);
+  const [presetDur, setPresetDur] = useState(15);
+  const [customDur, setCustomDur] = useState(false);
+  const [customDurVal, setCustomDurVal] = useState(45);
   const [names, setNames] = useState("");
+
+  // A match is capped where the main game isn't: it holds a sealed economy open, and every
+  // card inside it has to resolve before the whistle.
+  const duration = customDur ? Math.round(customDurVal) : presetDur;
+  const durationError =
+    duration < MIN_MATCH_MINUTES
+      ? `Shortest match is ${MIN_MATCH_MINUTES} minutes`
+      : duration > MAX_MATCH_MINUTES
+        ? `Longest match is ${MAX_MATCH_MINUTES / 60} hours`
+        : null;
 
   const usernames = names
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const valid =
-    usernames.length > 0 && (mode === "DUEL" ? usernames.length === 1 : true) && energy >= cost;
+    usernames.length > 0 &&
+    (mode === "DUEL" ? usernames.length === 1 : true) &&
+    energy >= cost &&
+    !durationError;
 
   const submit = async () => {
     setBusy(true);
@@ -251,14 +268,44 @@ function CreateDialog({
           className="mb-3 w-full rounded-xl border border-edge bg-black/40 px-3 py-2 font-mono text-sm outline-none focus:border-sell"
         />
 
-        <label className="mb-1.5 block text-xs text-mute">Duration</label>
-        <div className="mb-4 flex gap-1.5">
+        <div className="mb-1.5 flex items-baseline gap-2 text-xs">
+          <span className="text-mute">Duration</span>
+          <span className="tabnum ml-auto font-mono text-slate-200">
+            {durationError ? "—" : fmtDuration(duration * 60)}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
           {MATCH_DURATIONS.map((d) => (
-            <button key={d} data-on={duration === d} onClick={() => setDuration(d)} className="chip">
-              {d} min
+            <button
+              key={d}
+              data-on={!customDur && duration === d}
+              onClick={() => {
+                setCustomDur(false);
+                setPresetDur(d);
+              }}
+              className="chip"
+            >
+              {fmtDuration(d * 60)}
             </button>
           ))}
+          <button data-on={customDur} onClick={() => setCustomDur((v) => !v)} className="chip">
+            custom
+          </button>
         </div>
+        {customDur && (
+          <div className="mt-2 flex items-center gap-1.5">
+            <input
+              type="number"
+              min={MIN_MATCH_MINUTES}
+              max={MAX_MATCH_MINUTES}
+              value={customDurVal}
+              onChange={(e) => setCustomDurVal(Math.max(0, Number(e.target.value) || 0))}
+              className="tabnum w-full rounded-lg border border-edge bg-black/40 px-2.5 py-1.5 text-center font-mono text-sm outline-none focus:border-sell"
+            />
+            <span className="text-xs text-mute">min</span>
+          </div>
+        )}
+        <div className="mb-4 mt-1 text-[10px] text-danger">{durationError ?? ""}</div>
 
         <p className="mb-3 text-[11px] text-mute">
           Creating joins you immediately and costs <span className="text-gold">{cost} Energy</span>{" "}

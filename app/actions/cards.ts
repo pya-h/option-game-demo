@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import {
   ASSET_MAP,
   CFG,
+  MATCH_EXPIRY_MARGIN_SECONDS,
   MAX_EXPIRY_SECONDS,
   MIN_EXPIRY_SECONDS,
   type AssetSymbol,
@@ -50,7 +51,12 @@ async function logEvent(
   );
 }
 
-/** Validates a PvP match is running and the option can't outlive it (§21). */
+/**
+ * Validates a PvP match is running and the option resolves before the final whistle (§21).
+ * Strictly before, not at: a card settling in the same instant the match finalises would be
+ * ranked or not depending on which transaction landed first, and one that resolves after can
+ * never pay out at all — so offering either would be a trap.
+ */
 async function assertMatchWindow(c: PoolClient, matchId: number, seconds: number) {
   const { rows } = await c.query(
     `SELECT status, ends_at FROM matches WHERE id = $1 FOR SHARE`,
@@ -60,8 +66,9 @@ async function assertMatchWindow(c: PoolClient, matchId: number, seconds: number
   if (!m) fail("match not found");
   if (m.status !== "ACTIVE") fail("This match is not running");
   const remaining = (new Date(m.ends_at).getTime() - Date.now()) / 1000;
-  if (remaining <= 5) fail("The match is about to end");
-  if (seconds > remaining) fail("That expiry runs past the end of the match");
+  if (remaining <= MATCH_EXPIRY_MARGIN_SECONDS) fail("The match is about to end");
+  if (seconds > remaining - MATCH_EXPIRY_MARGIN_SECONDS)
+    fail("That expiry runs past the end of the match");
 }
 
 export type CreateInput = {

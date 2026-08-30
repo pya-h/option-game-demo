@@ -1,6 +1,6 @@
 "use server";
 
-import { CFG, MATCH_DURATIONS } from "@/lib/config";
+import { CFG, MAX_MATCH_MINUTES, MIN_MATCH_MINUTES } from "@/lib/config";
 import { GameError, fail, q, tx } from "@/lib/db";
 import { spendEnergy } from "@/lib/energy";
 import { getPrices } from "@/lib/prices";
@@ -31,7 +31,12 @@ export async function createMatch(input: {
 }): Promise<Res> {
   return guard(async () => {
     const me = await requireMe();
-    if (!MATCH_DURATIONS.includes(input.durationMin)) fail("invalid match duration");
+    // Presets are shortcuts; any whole number of minutes inside the bounds is allowed.
+    const durationMin = Math.round(input.durationMin);
+    if (!Number.isFinite(durationMin)) fail("invalid match duration");
+    if (durationMin < MIN_MATCH_MINUTES) fail(`The shortest match is ${MIN_MATCH_MINUTES} minutes`);
+    if (durationMin > MAX_MATCH_MINUTES)
+      fail(`The longest match is ${MAX_MATCH_MINUTES / 60} hours`);
 
     const wanted = [...new Set(input.usernames.map((u) => u.trim()).filter(Boolean))].filter(
       (u) => u.toLowerCase() !== me.username.toLowerCase()
@@ -56,7 +61,7 @@ export async function createMatch(input: {
 
       const { rows } = await c.query(
         `INSERT INTO matches (name, creator_id, mode, duration_min) VALUES ($1,$2,$3,$4) RETURNING id`,
-        [name, me.id, input.mode, input.durationMin]
+        [name, me.id, input.mode, durationMin]
       );
       const matchId = rows[0].id;
 

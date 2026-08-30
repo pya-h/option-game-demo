@@ -5,6 +5,7 @@ import { Coins, Flag, Lock, Play, Recycle, Swords, Trophy, Users, Wallet } from 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { endMatchNow, pvpConvert, startMatch } from "@/app/actions/pvp";
+import { MATCH_EXPIRY_MARGIN_SECONDS } from "@/lib/config";
 import { clock, num, usd } from "@/lib/fmt";
 import type { PvpStateDTO } from "@/lib/types";
 import CardGrid from "./CardGrid";
@@ -212,7 +213,9 @@ export default function MatchRoom({ matchId }: { matchId: number }) {
               optBalance={me!.pvp_opt}
               spendable={myFree}
               matchId={matchId}
-              maxSeconds={secsLeft}
+              // Same margin the server enforces, so the picker never offers an expiry that
+              // createCard would then refuse.
+              maxSeconds={Math.max(0, secsLeft - MATCH_EXPIRY_MARGIN_SECONDS)}
               premiumOptPerDollar={cfg.premiumOptPerDollar}
               onCreated={load}
             />
