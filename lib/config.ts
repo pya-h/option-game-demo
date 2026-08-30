@@ -134,6 +134,16 @@ export const MATCH_DURATIONS = [5, 15, 30, 60, 120, 240];
 export const MIN_MATCH_MINUTES = 5;
 export const MAX_MATCH_MINUTES = 240;
 
+/** Group sizes a player can queue for. Everyone in a bucket asked for the same number. */
+export const GROUP_SIZES = [3, 4, 5, 6];
+
+/**
+ * How long a queued player is kept without a heartbeat. The polling client refreshes it, so
+ * this only expires someone who closed the tab — otherwise they would hold a seat in a bucket
+ * that could never fill. Nothing is charged until a match forms, so there is nothing to refund.
+ */
+export const QUEUE_TIMEOUT_SECONDS = 45;
+
 /**
  * Gap an in-match option must leave between its expiry and the final whistle. A card settling
  * in the same instant the match finalises would count or not depending on which transaction

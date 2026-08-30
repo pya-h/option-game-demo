@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   switch (body.action) {
     case "reset": {
-      await q(`TRUNCATE card_events, cards, match_players, matches, price_cache, users RESTART IDENTITY CASCADE`);
+      await q(`TRUNCATE matchmaking_queue, card_events, cards, match_players, matches, price_cache, users RESTART IDENTITY CASCADE`);
       return NextResponse.json({ ok: true });
     }
 
@@ -72,6 +72,14 @@ export async function POST(req: Request) {
 
     case "endMatch": {
       await q(`UPDATE matches SET ends_at = now() - interval '1 second' WHERE id = $1`, [body.matchId]);
+      await settleDue();
+      return NextResponse.json({ ok: true });
+    }
+
+    case "ageQueue": {
+      // Pushes every queued heartbeat past the timeout, so a spec can test eviction without
+      // waiting out the real clock.
+      await q(`UPDATE matchmaking_queue SET seen_at = now() - interval '1 hour'`);
       await settleDue();
       return NextResponse.json({ ok: true });
     }

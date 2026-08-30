@@ -47,6 +47,11 @@ exist and OPT is the only limit. PvP cards and the PvP marketplace never touch t
 Ranking is by final PvP Portfolio, and the winner takes a small, fixed global reward so a big match
 can't distort the main economy.
 
+Matches come from two places. You can invite people by username, or press **Quick Match** and be
+paired at random — 1v1, or a group of a size you pick. Players are only ever grouped with others
+who asked for the same size *and* the same length, so a 3-player queue never absorbs someone who
+wanted 5. Searching is free: Energy is charged at the instant a match forms, never for waiting.
+
 ---
 
 ## Stack
@@ -85,6 +90,36 @@ name again resumes it. To try trading or PvP, open a second browser profile (or 
 window) and sign in as another player.
 
 For production: `pnpm build && pnpm start`.
+
+### Populating the demo
+
+An empty install has empty leaderboards. `simulate.mjs` fills them and then keeps them moving:
+
+```bash
+pnpm simulate                          # seed ~12 players, then play forever (Ctrl-C to stop)
+node scripts/simulate.mjs --users 30 --interval 1500
+node scripts/simulate.mjs --seed-only  # just backfill history and exit
+node scripts/simulate.mjs --reset      # clear players and cards first (destructive)
+```
+
+It drives the same functions in `lib/game` that the server actions call, rather than writing rows
+directly — so it can't produce a state the game itself would reject, and it doubles as a soak test.
+Losing actions genuinely lose; you'll see players run out of OPT mid-exercise.
+
+### Testing
+
+```bash
+pnpm test          # unit + integration (vitest)
+pnpm db:push:test  # once: create the throwaway e2e database
+pnpm test:e2e      # end-to-end (playwright)
+```
+
+Unit tests cover the pricing model, the energy clock, and the exchange-rate identity. Integration
+tests exercise settlement against a real Postgres, each inside a transaction that is always rolled
+back — safe to point at your dev database. The e2e suite runs a production build against a separate
+`<database>_test`, with `PRICE_SOURCE=fixed` and test hooks (`E2E_HOOKS=1`, 404 otherwise) so a spec
+asserting "this card wins" is testing the game rather than the market. Set `PW_CHANNEL=chrome` to
+use a locally installed Chrome instead of downloading Playwright's.
 
 ---
 
@@ -188,16 +223,22 @@ tier no matter how many clients are polling.
 ```
 app/
   (game)/          home · cards · store · rankings · pvp · pvp/[id]
-  actions/         server actions: auth, cards, store, pvp
-  api/state        global poll — settles, then returns player + prices + cards
+  actions/         authenticated entry points — resolve the caller, hand off to lib/game
+  api/state        global poll — settles, then returns player + prices + cards + queue
   api/pvp/[id]/    match poll — settles, then returns match + players + match cards
-components/        OptionCard, CreateOptionPanel, CardGrid, MatchRoom, ResourceBar, …
+  api/e2e/         test-only hooks; 404 unless E2E_HOOKS=1
+components/        OptionCard, CreateOptionPanel, CardGrid, MatchRoom, QuickMatch, …
 lib/
   config.ts        every tunable knob
   options.ts       pricing + settlement maths
-  settle.ts        expiry resolution + match finalisation
+  settle.ts        expiry resolution + match finalisation + matchmaking pass
   wallet.ts        the single accessor for global vs PvP balances
   energy.ts        lazy regeneration
+  game/            the rules: cards, store, pvp, matchmaking
+scripts/
+  push.mjs         apply the schema
+  simulate.mjs     seed and then keep playing
+tests/             unit · integration · e2e
 db/schema.sql      re-runnable schema
 ```
 
@@ -205,6 +246,11 @@ db/schema.sql      re-runnable schema
 `users`, PvP balances on `match_players`, and every read and write goes through one accessor
 keyed by `matchId`. Cards use the same table with a nullable `match_id`, so one settlement engine
 serves both.
+
+**`lib/game` vs `app/actions`.** The rules take an explicit `userId`; the actions resolve the caller
+from their session and delegate. This isn't only tidiness: every export of a `"use server"` module
+becomes a public HTTP endpoint, so a rules function taking a `userId` must never live in one. The
+split also lets the simulation script drive exactly the code a player does.
 
 ---
 

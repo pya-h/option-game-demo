@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { accrue } from "@/lib/energy";
+import { heartbeat, queueStatusFor } from "@/lib/game/matchmaking";
 import { getPrices } from "@/lib/prices";
 import { publicCfg } from "@/lib/public-config";
 import { currentUserId } from "@/lib/session";
@@ -60,6 +61,20 @@ export async function GET() {
       [uid]
     );
 
+    // Polling is what keeps a queued player's seat alive; stop polling and they age out.
+    await heartbeat(c, uid);
+    const queue = await queueStatusFor(c, uid);
+
+    // Matchmaking joins a player to a live match without them clicking anything, so the client
+    // needs to be told where to go.
+    const { rows: liveMatch } = await c.query<{ id: number }>(
+      `SELECT m.id FROM match_players mp
+         JOIN matches m ON m.id = mp.match_id
+        WHERE mp.user_id = $1 AND mp.state = 'JOINED' AND m.status = 'ACTIVE'
+        ORDER BY m.started_at DESC LIMIT 1`,
+      [uid]
+    );
+
     const body: StateDTO = {
       me: {
         id: u.id,
@@ -83,6 +98,8 @@ export async function GET() {
       })),
       cards: cards as StateDTO["cards"],
       pendingInvites: inv[0].n,
+      queue,
+      liveMatchId: liveMatch[0]?.id ?? null,
       cfg: publicCfg(),
     };
     return NextResponse.json(body);

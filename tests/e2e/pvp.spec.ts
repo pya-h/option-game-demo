@@ -29,9 +29,11 @@ test("a match runs from invite to ranked result, and pays the winner a global re
   // Alice creates and is joined immediately, which is what charges her Energy.
   await page.goto("/pvp");
   await page.click('button:has-text("New Match")');
+  // Scoped to the dialog: the Quick Match panel behind it offers the same duration chips.
+  const dialog = page.locator("div.panel").filter({ hasText: "Create a match" });
   await page.fill('input[placeholder="BTC Arena"]', "Test Arena");
   await page.fill('input[placeholder="bob"]', "bob");
-  await page.locator("button.chip", { hasText: /^15m$/ }).click();
+  await dialog.locator("button.chip", { hasText: /^15m$/ }).click();
   await page.click('button:has-text("Create")');
   await page.waitForURL(/\/pvp\/\d+/);
   const matchId = Number(page.url().split("/").pop());
@@ -162,8 +164,9 @@ test("an option cannot be minted to expire after the final whistle", async ({ pa
 
   await page.goto("/pvp");
   await page.click('button:has-text("New Match")');
+  const dialog = page.locator("div.panel").filter({ hasText: "Create a match" });
   await page.fill('input[placeholder="bob"]', "bob");
-  await page.locator("button.chip", { hasText: /^5m$/ }).click();
+  await dialog.locator("button.chip", { hasText: /^5m$/ }).click();
   await page.click('button:has-text("Create")');
   await page.waitForURL(/\/pvp\/\d+/);
 

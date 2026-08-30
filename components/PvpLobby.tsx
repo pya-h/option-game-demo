@@ -10,6 +10,7 @@ import type { LobbyRow } from "@/app/(game)/pvp/page";
 import { MATCH_DURATIONS, MAX_MATCH_MINUTES, MIN_MATCH_MINUTES } from "@/lib/config";
 import { duration as fmtDuration } from "@/lib/fmt";
 import { useGame } from "./GameProvider";
+import QuickMatch from "./QuickMatch";
 
 const STATUS = {
   LOBBY: { label: "Waiting", cls: "text-gold bg-gold/15" },
@@ -50,6 +51,9 @@ export default function PvpLobby({ rows, meId }: { rows: LobbyRow[]; meId: numbe
           New Match
         </button>
       </header>
+
+      {/* Random matchmaking sits alongside username invites rather than replacing them. */}
+      <QuickMatch />
 
       {invites.length > 0 && (
         <section className="panel panel-hi border-sell/40 p-4">

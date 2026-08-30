@@ -1,5 +1,6 @@
 -- OPT game demo schema. Re-runnable: drops everything and recreates.
 
+DROP TABLE IF EXISTS matchmaking_queue CASCADE;
 DROP TABLE IF EXISTS card_events CASCADE;
 DROP TABLE IF EXISTS cards CASCADE;
 DROP TABLE IF EXISTS match_players CASCADE;
@@ -54,6 +55,22 @@ CREATE TABLE match_players (
   CONSTRAINT mp_locked_within_portfolio CHECK (pvp_locked <= pvp_portfolio),
   CONSTRAINT mp_no_negative CHECK (pvp_opt >= 0 AND pvp_portfolio >= 0 AND pvp_locked >= 0)
 );
+
+-- Players waiting for a random match. One row per player — the primary key is what makes
+-- double-queueing impossible — and a bucket is every row sharing (mode, size, duration_min).
+-- seen_at is refreshed by the polling client, so someone who closes the tab ages out of the
+-- queue instead of holding a seat nobody can fill.
+CREATE TABLE matchmaking_queue (
+  user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  mode         TEXT NOT NULL CHECK (mode IN ('DUEL','GROUP')),
+  size         INTEGER NOT NULL CHECK (size BETWEEN 2 AND 8),
+  duration_min INTEGER NOT NULL,
+  queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  seen_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX matchmaking_bucket_idx
+  ON matchmaking_queue (mode, size, duration_min, queued_at);
 
 -- match_id NULL => global game card. Otherwise the card belongs only to that PvP match.
 CREATE TABLE cards (

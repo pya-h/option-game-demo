@@ -42,11 +42,24 @@ export type MeDTO = {
   players: number;
 };
 
+export type QueueDTO = {
+  mode: "DUEL" | "GROUP";
+  size: number;
+  durationMin: number;
+  /** How many players are waiting in this exact bucket, including you. */
+  waiting: number;
+  queuedAt: string;
+};
+
 export type StateDTO = {
   me: MeDTO;
   prices: PriceDTO[];
   cards: CardDTO[];
   pendingInvites: number;
+  /** Set while the player is searching for a random match. */
+  queue: QueueDTO | null;
+  /** A match the player is in that is running right now, matchmade or otherwise. */
+  liveMatchId: number | null;
   cfg: PublicCfg;
 };
 

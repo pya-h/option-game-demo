@@ -33,9 +33,17 @@ export async function signIn(page: Page, username: string) {
   await page.waitForSelector('button:has-text("Mint")');
 }
 
-/** Reads the polled state payload straight from the page's session. */
+/**
+ * Reads the polled state payload for this page's session.
+ *
+ * Goes through the page's request context rather than an in-page fetch: matchmaking navigates
+ * the page the moment a match forms, which would cancel an in-flight fetch and surface as a
+ * truncated body rather than as the state we asked for.
+ */
 export async function state(page: Page) {
-  return page.evaluate(async () => (await fetch("/api/state")).json());
+  const r = await page.request.get("/api/state");
+  if (!r.ok()) throw new Error(`/api/state returned ${r.status()}: ${await r.text()}`);
+  return r.json();
 }
 
 /**

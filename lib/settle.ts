@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { CFG, type AssetSymbol } from "./config";
 import { tx } from "./db";
 import { exerciseCost, exercisePayout, sellLoss } from "./options";
+import { runMatchmakingInTx } from "./game/matchmaking";
 import { getPrices } from "./prices";
 
 /**
@@ -122,6 +123,10 @@ export async function settleDue() {
       `SELECT id FROM matches WHERE status = 'ACTIVE' AND ends_at <= now() FOR UPDATE`
     );
     for (const m of ended) await finalizeMatchInTx(c, m.id, prices);
+
+    // Forming matches belongs here for the same reason settling does: it needs to happen
+    // regularly, exactly once at a time, and without a worker process to run it.
+    await runMatchmakingInTx(c);
   });
 }
 
