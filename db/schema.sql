@@ -15,7 +15,7 @@ CREATE TABLE users (
   locked            NUMERIC(20,6) NOT NULL DEFAULT 0,
   xp                INTEGER NOT NULL DEFAULT 0,
   energy            NUMERIC(10,4) NOT NULL DEFAULT 0,
-  energy_capacity   INTEGER NOT NULL DEFAULT 10,
+  energy_capacity   INTEGER NOT NULL DEFAULT 50,
   energy_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT users_locked_within_portfolio CHECK (locked <= portfolio),

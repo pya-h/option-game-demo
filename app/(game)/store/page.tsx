@@ -15,7 +15,12 @@ export default function StorePage() {
   const me = state.me;
   const cfg = state.cfg;
 
-  const tier = Math.round((me.energy_capacity - cfg.initialEnergyCapacity) / cfg.energyCellStep);
+  // Clamped the same way the server clamps it, so a player below a raised starting capacity
+  // sees the first tier's price rather than an undefined one.
+  const tier = Math.max(
+    0,
+    Math.round((me.energy_capacity - cfg.initialEnergyCapacity) / cfg.energyCellStep)
+  );
   const cellPrice = cfg.energyCellPrices[tier];
   const maxed = tier >= cfg.energyCellPrices.length;
   const full = me.energy >= me.energy_capacity;
