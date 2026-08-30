@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import { ASSET_MAP, CFG, EXPIRIES, type AssetSymbol } from "@/lib/config";
 import { GameError, fail, q, tx } from "@/lib/db";
 import { spendEnergy } from "@/lib/energy";
-import { collateralFor, exerciseCost, exercisePayout, quotePremium } from "@/lib/options";
+import { cardValue, collateralFor, exerciseCost, exercisePayout, quotePremium } from "@/lib/options";
 import { getPrice } from "@/lib/prices";
 import { requireMe } from "@/lib/session";
 import type { CardEventDTO } from "@/lib/types";
@@ -182,23 +182,60 @@ export async function exerciseCard(cardId: number): Promise<Res> {
   });
 }
 
-export async function listCard(cardId: number, ask: number): Promise<Res> {
+/**
+ * Lists a card on the marketplace.
+ *
+ * `ask` is optional for a Buy card and required for a Sell card, and the asymmetry is
+ * deliberate. A Buy card's worth is something the engine already computes — asking the
+ * player to type it is asking them to guess at a number we know better — so leaving `ask`
+ * off re-quotes it here, at live spot, at submit time. A Sell card's takeover premium is
+ * genuinely the seller's call: they are paying someone to absorb an obligation, and there
+ * is no fair value to default to.
+ */
+export async function listCard(cardId: number, ask?: number | null): Promise<Res> {
   return guard(async () => {
     const me = await requireMe();
-    if (!(ask > 0) || !Number.isFinite(ask)) fail("invalid price");
+    const custom = ask ?? null;
+    if (custom !== null && (!(custom > 0) || !Number.isFinite(custom))) fail("invalid price");
+
     return await tx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM cards WHERE id = $1 FOR UPDATE`, [cardId]);
       const card = rows[0];
       if (!card) fail("card not found");
       if (card.owner_id !== me.id) fail("you don't own this card");
       if (card.status !== "ACTIVE") fail("only active cards can be listed");
+      if (card.for_sale) fail("this card is already listed");
 
-      await c.query(`UPDATE cards SET for_sale = TRUE, ask = $2 WHERE id = $1`, [cardId, ask]);
+      let price = custom;
+      if (price === null) {
+        if (card.kind !== "BUY") fail("set the takeover premium you're offering");
+        const spot = await getPrice(card.asset);
+        const secondsLeft = (new Date(card.expires_at).getTime() - Date.now()) / 1000;
+        const value = cardValue({
+          asset: card.asset,
+          strike: card.strike,
+          amount: card.amount,
+          spot,
+          secondsLeft,
+        });
+        price = Math.max(0.01, +value.total.toFixed(2));
+      }
+
+      await c.query(`UPDATE cards SET for_sale = TRUE, ask = $2 WHERE id = $1`, [cardId, price]);
       await logEvent(c, cardId, "LISTED", {
         actor: me.id,
-        note: card.kind === "BUY" ? `asking $${ask}` : `offering ${ask} OPT to assume`,
+        note:
+          card.kind === "BUY"
+            ? `asking $${price.toFixed(2)}${custom === null ? " (live value)" : ""}`
+            : `offering ${price} OPT to assume`,
       });
-      return { ok: true, message: "Listed on the marketplace" };
+      return {
+        ok: true,
+        message:
+          card.kind === "BUY"
+            ? `Listed at $${price.toFixed(2)}`
+            : `Listed · offering ${price} OPT to assume`,
+      };
     });
   });
 }

@@ -5,6 +5,7 @@ import { Sparkles, Tag, TagIcon, X } from "lucide-react";
 import { useState } from "react";
 import { acquireCard, cardHistory, exerciseCard, listCard, unlistCard } from "@/app/actions/cards";
 import { opt as fmtOpt, usd } from "@/lib/fmt";
+import { cardValue } from "@/lib/options";
 import type { CardDTO, CardEventDTO, PriceDTO } from "@/lib/types";
 import { useGame } from "./GameProvider";
 import OptionCard from "./OptionCard";
@@ -115,6 +116,7 @@ export default function CardGrid({
         {listing && (
           <ListDialog
             card={listing}
+            spot={px.find((p) => p.asset === listing.asset)?.price ?? 0}
             onClose={() => setListing(null)}
             onSubmit={async (ask) => {
               const ok = await run(() => listCard(listing.id, ask));
@@ -151,19 +153,36 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
   );
 }
 
+/**
+ * A Buy card lists at its live value by default — that number is computed, not guessed, so
+ * asking the player for it would only invite a worse answer. Custom pricing is still there,
+ * one click away. A Sell card has no fair value to default to: the takeover premium is what
+ * the seller is willing to pay someone to absorb the obligation, so it stays a plain input.
+ */
 function ListDialog({
   card,
+  spot,
   onClose,
   onSubmit,
 }: {
   card: CardDTO;
+  spot: number;
   onClose: () => void;
-  onSubmit: (ask: number) => void;
+  onSubmit: (ask: number | null) => void;
 }) {
   const isBuy = card.kind === "BUY";
-  const [ask, setAsk] = useState(
-    isBuy ? Math.round(card.strike * card.amount * 0.1) || 10 : Math.ceil(card.premium * 1.4)
-  );
+  const [custom, setCustom] = useState(!isBuy);
+  const [ask, setAsk] = useState<number | null>(isBuy ? null : Math.ceil(card.premium * 1.4));
+
+  const secondsLeft = Math.max(0, (new Date(card.expires_at).getTime() - Date.now()) / 1000);
+  const live = spot
+    ? cardValue({ asset: card.asset, strike: card.strike, amount: card.amount, spot, secondsLeft })
+    : null;
+
+  // Only sent when the player overrode it; otherwise the server re-quotes at submit time so
+  // the listed price is the value at that instant, not whatever this dialog last rendered.
+  const submitted = custom ? ask : null;
+  const ready = custom ? (ask ?? 0) > 0 : !!live;
 
   return (
     <Shell onClose={onClose}>
@@ -183,16 +202,55 @@ function ListDialog({
           : `Whoever assumes this card locks ${usd(card.collateral, 0)} of their own Portfolio as collateral and takes on the obligation. You pay them the takeover premium in OPT, and your collateral is released. You originally received ${fmtOpt(card.premium)}.`}
       </p>
 
-      <label className="mb-1.5 block text-xs text-mute">
-        {isBuy ? "Asking price (Portfolio $)" : "Takeover premium you pay (OPT)"}
-      </label>
-      <input
-        type="number"
-        min={1}
-        value={ask}
-        onChange={(e) => setAsk(Math.max(0, Number(e.target.value) || 0))}
-        className="tabnum mb-4 w-full rounded-xl border border-edge bg-black/40 px-3 py-2.5 font-mono outline-none focus:border-buy"
-      />
+      {isBuy && (
+        <div className="mb-3 rounded-xl border border-edge/70 bg-black/25 px-3 py-2.5">
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs text-mute">Live value</span>
+            <motion.span
+              key={live?.total.toFixed(2)}
+              initial={{ scale: 1.12 }}
+              animate={{ scale: 1 }}
+              className="tabnum ml-auto font-mono text-lg font-semibold text-buy"
+            >
+              {live ? usd(live.total) : "—"}
+            </motion.span>
+          </div>
+          {live && (
+            <div className="tabnum mt-1 text-[10px] text-mute">
+              {usd(live.intrinsic)} intrinsic + {usd(live.timeValue)} time value · re-quoted the
+              moment you list
+            </div>
+          )}
+        </div>
+      )}
+
+      {isBuy && (
+        <button
+          onClick={() => {
+            setCustom((v) => !v);
+            if (!custom && ask === null && live) setAsk(+live.total.toFixed(2));
+          }}
+          className="mb-3 text-xs text-mute underline decoration-dotted underline-offset-4 hover:text-slate-200"
+        >
+          {custom ? "Use the live value instead" : "Set a custom price"}
+        </button>
+      )}
+
+      {custom && (
+        <>
+          <label className="mb-1.5 block text-xs text-mute">
+            {isBuy ? "Asking price (Portfolio $)" : "Takeover premium you pay (OPT)"}
+          </label>
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={ask ?? ""}
+            onChange={(e) => setAsk(Math.max(0, Number(e.target.value) || 0))}
+            className="tabnum mb-4 w-full rounded-xl border border-edge bg-black/40 px-3 py-2.5 font-mono outline-none focus:border-buy"
+          />
+        </>
+      )}
 
       <div className="flex gap-2">
         <button className="btn btn-ghost flex-1" onClick={onClose}>
@@ -200,10 +258,10 @@ function ListDialog({
         </button>
         <button
           className={`btn flex-1 ${isBuy ? "btn-primary" : "btn-sell"}`}
-          disabled={!(ask > 0)}
-          onClick={() => onSubmit(ask)}
+          disabled={!ready}
+          onClick={() => onSubmit(submitted)}
         >
-          List it
+          {isBuy && !custom ? "List at live value" : "List it"}
         </button>
       </div>
     </Shell>
