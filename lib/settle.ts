@@ -37,7 +37,7 @@ async function logEvent(
 }
 
 /** Settles one expired card. Balances go to users (global) or match_players (PvP). */
-async function settleCard(c: PoolClient, card: DueCard, spot: number) {
+export async function settleCard(c: PoolClient, card: DueCard, spot: number) {
   const isPvp = card.match_id !== null;
 
   if (card.kind === "BUY") {
