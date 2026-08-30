@@ -1,0 +1,308 @@
+"use server";
+
+import type { PoolClient } from "pg";
+import { ASSET_MAP, CFG, EXPIRIES, type AssetSymbol } from "@/lib/config";
+import { GameError, fail, q, tx } from "@/lib/db";
+import { spendEnergy } from "@/lib/energy";
+import { collateralFor, exerciseCost, exercisePayout, quotePremium } from "@/lib/options";
+import { getPrice } from "@/lib/prices";
+import { requireMe } from "@/lib/session";
+import type { CardEventDTO } from "@/lib/types";
+import { applyWallet, loadWallet } from "@/lib/wallet";
+
+type Res = { ok: boolean; message?: string };
+
+/** Turns rule violations into player-facing messages instead of 500s. */
+async function guard(fn: () => Promise<Res>): Promise<Res> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    if (e instanceof GameError) return { ok: false, message: e.message };
+    console.error(e);
+    return { ok: false, message: "Server error" };
+  }
+}
+
+async function logEvent(
+  c: PoolClient,
+  cardId: number,
+  type: string,
+  o: {
+    actor?: number | null;
+    from?: number | null;
+    to?: number | null;
+    opt?: number;
+    portfolio?: number;
+    note?: string;
+  } = {}
+) {
+  await c.query(
+    `INSERT INTO card_events (card_id, type, actor_id, from_user_id, to_user_id, opt_delta, portfolio_delta, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [cardId, type, o.actor ?? null, o.from ?? null, o.to ?? null, o.opt ?? 0, o.portfolio ?? 0, o.note ?? null]
+  );
+}
+
+/** Validates a PvP match is running and the option can't outlive it (§21). */
+async function assertMatchWindow(c: PoolClient, matchId: number, seconds: number) {
+  const { rows } = await c.query(
+    `SELECT status, ends_at FROM matches WHERE id = $1 FOR SHARE`,
+    [matchId]
+  );
+  const m = rows[0];
+  if (!m) fail("match not found");
+  if (m.status !== "ACTIVE") fail("This match is not running");
+  const remaining = (new Date(m.ends_at).getTime() - Date.now()) / 1000;
+  if (remaining <= 5) fail("The match is about to end");
+  if (seconds > remaining) fail("That expiry runs past the end of the match");
+}
+
+export type CreateInput = {
+  kind: "BUY" | "SELL";
+  asset: AssetSymbol;
+  strikePct: number; // strike as % offset from live spot
+  amount: number;
+  seconds: number;
+  matchId?: number | null;
+};
+
+export async function createCard(input: CreateInput): Promise<Res> {
+  return guard(async () => {
+    const me = await requireMe();
+    const matchId = input.matchId ?? null;
+
+    if (!ASSET_MAP[input.asset]) fail("unknown asset");
+    if (!EXPIRIES.some((e) => e.seconds === input.seconds)) fail("invalid expiry");
+    if (!(input.amount > 0) || !Number.isFinite(input.amount)) fail("invalid amount");
+    if (!Number.isFinite(input.strikePct) || Math.abs(input.strikePct) > 50)
+      fail("strike must be within ±50% of spot");
+
+    // Spot and premium are always recomputed here — never taken from the client.
+    const spot = await getPrice(input.asset);
+    const strike = +(spot * (1 + input.strikePct / 100)).toFixed(6);
+    const amount = +input.amount.toFixed(8);
+    const premium = quotePremium({
+      asset: input.asset,
+      strike,
+      amount,
+      spot,
+      seconds: input.seconds,
+    });
+    const collateral = input.kind === "SELL" ? collateralFor(strike, amount) : 0;
+
+    return await tx(async (c) => {
+      if (matchId !== null) await assertMatchWindow(c, matchId, input.seconds);
+      else await spendEnergy(c, me.id, CFG.OPTION_ENERGY_COST);
+
+      const w = await loadWallet(c, me.id, matchId);
+
+      if (input.kind === "BUY") {
+        if (w.opt < premium) fail(`Not enough OPT (need ${premium}, have ${Math.floor(w.opt)})`);
+        await applyWallet(c, me.id, matchId, { opt: -premium });
+      } else {
+        if (w.spendable < collateral)
+          fail(
+            `Not enough free Portfolio for collateral (need $${collateral.toFixed(0)}, free $${w.spendable.toFixed(0)})`
+          );
+        await applyWallet(c, me.id, matchId, { opt: premium, locked: collateral });
+      }
+
+      const expiresAt = new Date(Date.now() + input.seconds * 1000);
+      const { rows } = await c.query(
+        `INSERT INTO cards
+           (match_id, owner_id, creator_id, kind, asset, strike, amount, spot_at_create,
+            premium, collateral, expires_at)
+         VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [matchId, me.id, input.kind, input.asset, strike, amount, spot, premium, collateral, expiresAt]
+      );
+      const id = rows[0].id;
+
+      await logEvent(c, id, "CREATED", {
+        actor: me.id,
+        to: me.id,
+        opt: input.kind === "BUY" ? -premium : premium,
+        note:
+          input.kind === "BUY"
+            ? `paid ${premium} OPT premium`
+            : `received ${premium} OPT premium · locked $${collateral.toFixed(2)}`,
+      });
+
+      return {
+        ok: true,
+        message:
+          input.kind === "BUY"
+            ? `Card #${id} minted · −${premium} OPT`
+            : `Card #${id} written · +${premium} OPT · $${collateral.toFixed(0)} locked`,
+      };
+    });
+  });
+}
+
+export async function exerciseCard(cardId: number): Promise<Res> {
+  return guard(async () => {
+    const me = await requireMe();
+    return await tx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT * FROM cards WHERE id = $1 FOR UPDATE`,
+        [cardId]
+      );
+      const card = rows[0];
+      if (!card) fail("card not found");
+      if (card.owner_id !== me.id) fail("you don't own this card");
+      if (card.kind !== "BUY") fail("only Buy Options can be exercised");
+      if (card.status !== "WON") fail("only a winning card can be exercised");
+
+      const cost = exerciseCost(card.strike, card.amount);
+      const payout = exercisePayout(card.strike, card.amount, card.settle_price);
+
+      const w = await loadWallet(c, me.id, card.match_id);
+      if (w.opt < cost)
+        fail(`Exercising costs ${Math.ceil(cost)} OPT — you have ${Math.floor(w.opt)}`);
+
+      await applyWallet(c, me.id, card.match_id, { opt: -cost, portfolio: payout });
+      await c.query(`UPDATE cards SET status = 'EXERCISED' WHERE id = $1`, [cardId]);
+      await logEvent(c, cardId, "EXERCISED", {
+        actor: me.id,
+        opt: -cost,
+        portfolio: payout,
+        note: `burned ${cost.toFixed(0)} OPT for $${payout.toFixed(2)} Portfolio`,
+      });
+
+      return { ok: true, message: `Exercised · −${cost.toFixed(0)} OPT · +$${payout.toFixed(0)} Portfolio` };
+    });
+  });
+}
+
+export async function listCard(cardId: number, ask: number): Promise<Res> {
+  return guard(async () => {
+    const me = await requireMe();
+    if (!(ask > 0) || !Number.isFinite(ask)) fail("invalid price");
+    return await tx(async (c) => {
+      const { rows } = await c.query(`SELECT * FROM cards WHERE id = $1 FOR UPDATE`, [cardId]);
+      const card = rows[0];
+      if (!card) fail("card not found");
+      if (card.owner_id !== me.id) fail("you don't own this card");
+      if (card.status !== "ACTIVE") fail("only active cards can be listed");
+
+      await c.query(`UPDATE cards SET for_sale = TRUE, ask = $2 WHERE id = $1`, [cardId, ask]);
+      await logEvent(c, cardId, "LISTED", {
+        actor: me.id,
+        note: card.kind === "BUY" ? `asking $${ask}` : `offering ${ask} OPT to assume`,
+      });
+      return { ok: true, message: "Listed on the marketplace" };
+    });
+  });
+}
+
+export async function unlistCard(cardId: number): Promise<Res> {
+  return guard(async () => {
+    const me = await requireMe();
+    return await tx(async (c) => {
+      const { rows } = await c.query(`SELECT * FROM cards WHERE id = $1 FOR UPDATE`, [cardId]);
+      if (!rows[0]) fail("card not found");
+      if (rows[0].owner_id !== me.id) fail("you don't own this card");
+      await c.query(`UPDATE cards SET for_sale = FALSE, ask = NULL WHERE id = $1`, [cardId]);
+      await logEvent(c, cardId, "UNLISTED", { actor: me.id });
+      return { ok: true, message: "Removed from the marketplace" };
+    });
+  });
+}
+
+/**
+ * Acquires a listed card. Both paths are atomic and re-check affordability under a row lock.
+ *
+ * BUY  — ownership transfers for Portfolio $ (§7).
+ * SELL — the assumer takes on the obligation: their collateral locks, the previous
+ *        owner's unlocks, and the previous owner pays them the takeover premium in OPT (§11).
+ */
+export async function acquireCard(cardId: number): Promise<Res> {
+  return guard(async () => {
+    const me = await requireMe();
+    return await tx(async (c) => {
+      const { rows } = await c.query(`SELECT * FROM cards WHERE id = $1 FOR UPDATE`, [cardId]);
+      const card = rows[0];
+      if (!card) fail("card not found");
+      if (!card.for_sale || card.ask === null) fail("this card is not for sale");
+      if (card.status !== "ACTIVE") fail("this card has already resolved");
+      if (card.owner_id === me.id) fail("you already own this card");
+      if (new Date(card.expires_at).getTime() <= Date.now()) fail("this card is expiring right now");
+
+      const seller = card.owner_id;
+      const matchId = card.match_id;
+      if (matchId !== null) {
+        const { rows: mp } = await c.query(
+          `SELECT 1 FROM match_players WHERE match_id = $1 AND user_id = $2 AND state = 'JOINED'`,
+          [matchId, me.id]
+        );
+        if (!mp[0]) fail("you are not in this match");
+      }
+
+      // Lock both wallets in a stable order so two simultaneous buys can't deadlock.
+      const [aId, bId] = seller < me.id ? [seller, me.id] : [me.id, seller];
+      const wA = await loadWallet(c, aId, matchId);
+      const wB = await loadWallet(c, bId, matchId);
+      const sellerW = seller === aId ? wA : wB;
+      const buyerW = me.id === aId ? wA : wB;
+
+      if (card.kind === "BUY") {
+        const price = Number(card.ask);
+        if (buyerW.spendable < price)
+          fail(`Need $${price.toFixed(0)} free Portfolio — you have $${buyerW.spendable.toFixed(0)}`);
+        await applyWallet(c, me.id, matchId, { portfolio: -price });
+        await applyWallet(c, seller, matchId, { portfolio: price });
+        await c.query(`UPDATE cards SET owner_id = $2, for_sale = FALSE, ask = NULL WHERE id = $1`, [
+          cardId,
+          me.id,
+        ]);
+        await logEvent(c, cardId, "SOLD", {
+          actor: me.id,
+          from: seller,
+          to: me.id,
+          portfolio: price,
+          note: `card bought for $${price.toFixed(2)} Portfolio`,
+        });
+        return { ok: true, message: `Card #${cardId} acquired for $${price.toFixed(0)}` };
+      }
+
+      // SELL: obligation handover.
+      const takeover = Number(card.ask);
+      const collateral = Number(card.collateral);
+      if (buyerW.spendable < collateral)
+        fail(
+          `Assuming this needs $${collateral.toFixed(0)} free Portfolio as collateral — you have $${buyerW.spendable.toFixed(0)}`
+        );
+      if (sellerW.opt < takeover) fail("the current owner can no longer pay the takeover premium");
+
+      await applyWallet(c, seller, matchId, { locked: -collateral, opt: -takeover });
+      await applyWallet(c, me.id, matchId, { locked: collateral, opt: takeover });
+      await c.query(`UPDATE cards SET owner_id = $2, for_sale = FALSE, ask = NULL WHERE id = $1`, [
+        cardId,
+        me.id,
+      ]);
+      await logEvent(c, cardId, "ASSUMED", {
+        actor: me.id,
+        from: seller,
+        to: me.id,
+        opt: takeover,
+        note: `obligation assumed for ${takeover} OPT · $${collateral.toFixed(2)} collateral moved`,
+      });
+      return {
+        ok: true,
+        message: `Obligation assumed · +${takeover} OPT · $${collateral.toFixed(0)} locked`,
+      };
+    });
+  });
+}
+
+export async function cardHistory(cardId: number): Promise<CardEventDTO[]> {
+  return q<CardEventDTO>(
+    `SELECT e.id, e.type, a.username AS actor, f.username AS from_user, t.username AS to_user,
+            e.opt_delta, e.portfolio_delta, e.note, e.created_at
+       FROM card_events e
+       LEFT JOIN users a ON a.id = e.actor_id
+       LEFT JOIN users f ON f.id = e.from_user_id
+       LEFT JOIN users t ON t.id = e.to_user_id
+      WHERE e.card_id = $1 ORDER BY e.id ASC`,
+    [cardId]
+  );
+}
