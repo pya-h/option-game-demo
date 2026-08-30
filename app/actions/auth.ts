@@ -12,23 +12,27 @@ export async function login(formData: FormData) {
     return { ok: false, message: "3-20 letters, digits or underscores" };
   }
 
-  const [existing] = await q<{ id: number }>(`SELECT id FROM users WHERE lower(username) = lower($1)`, [
-    username,
-  ]);
+  // Create-or-resume in one statement. Doing it as SELECT-then-INSERT loses a race: two
+  // sign-ins for the same name both miss, both insert, and the loser hits the case-insensitive
+  // unique index and gets a 500 instead of simply resuming the account that just won.
+  const [row] = await q<{ id: number }>(
+    // energy is numeric and energy_capacity is integer, so the shared parameter needs
+    // explicit casts — Postgres can't deduce one type for both.
+    `WITH inserted AS (
+       INSERT INTO users (username, opt, portfolio, energy, energy_capacity, energy_updated_at)
+       VALUES ($1, $2, 0, $3::numeric, $3::integer, now())
+       ON CONFLICT (lower(username)) DO NOTHING
+       RETURNING id
+     )
+     SELECT id FROM inserted
+     UNION ALL
+     SELECT id FROM users WHERE lower(username) = lower($1)
+     LIMIT 1`,
+    [username, CFG.INITIAL_OPT_BALANCE, CFG.INITIAL_ENERGY_CAPACITY]
+  );
+  if (!row) return { ok: false, message: "Could not sign you in — try again" };
 
-  let id = existing?.id;
-  if (!id) {
-    const [created] = await q<{ id: number }>(
-      // energy is numeric and energy_capacity is integer, so the shared parameter needs
-      // explicit casts — Postgres can't deduce one type for both.
-      `INSERT INTO users (username, opt, portfolio, energy, energy_capacity, energy_updated_at)
-       VALUES ($1, $2, 0, $3::numeric, $3::integer, now()) RETURNING id`,
-      [username, CFG.INITIAL_OPT_BALANCE, CFG.INITIAL_ENERGY_CAPACITY]
-    );
-    id = created.id;
-  }
-
-  await setSession(id);
+  await setSession(row.id);
   redirect("/home");
 }
 

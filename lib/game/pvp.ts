@@ -59,6 +59,8 @@ export async function createMatchFor(
          VALUES ($1,$2,'JOINED',$3,0,now())`,
         [matchId, me.id, CFG.PVP_INITIAL_OPT]
       );
+      // Creating a match is the same decision as accepting one: stop searching for another.
+      await c.query(`DELETE FROM matchmaking_queue WHERE user_id = $1`, [me.id]);
       for (const f of found) {
         await c.query(
           `INSERT INTO match_players (match_id, user_id, state) VALUES ($1,$2,'INVITED')`,
@@ -103,6 +105,9 @@ export async function respondInviteFor(userId: number, matchId: number, accept: 
           WHERE match_id = $1 AND user_id = $2`,
         [matchId, me.id, CFG.PVP_INITIAL_OPT]
       );
+      // Taking a named invite is a decision to play *this* match; leaving a random search
+      // running alongside it would only queue them into a second one.
+      await c.query(`DELETE FROM matchmaking_queue WHERE user_id = $1`, [me.id]);
       return {
         ok: true,
         message: `Joined · −${CFG.PVP_ENERGY_COST} Energy · ${CFG.PVP_INITIAL_OPT} PvP OPT`,

@@ -309,6 +309,13 @@ export async function acquireCardFor(userId: number, cardId: number): Promise<Re
       const seller = card.owner_id;
       const matchId = card.match_id;
       if (matchId !== null) {
+        // Mirrors exerciseCard: a finished match has already ranked its players, so moving PvP
+        // balances now would change a standing nobody can see. FOR SHARE because the settler
+        // finalises under FOR UPDATE on this row.
+        const { rows: m } = await c.query(`SELECT status FROM matches WHERE id = $1 FOR SHARE`, [
+          matchId,
+        ]);
+        if (m[0]?.status !== "ACTIVE") fail("That match is over");
         const { rows: mp } = await c.query(
           `SELECT 1 FROM match_players WHERE match_id = $1 AND user_id = $2 AND state = 'JOINED'`,
           [matchId, me.id]

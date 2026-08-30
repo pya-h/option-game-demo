@@ -135,6 +135,18 @@ export async function runMatchmakingInTx(c: PoolClient) {
     [QUEUE_TIMEOUT_SECONDS]
   );
 
+  // joinQueue refuses anyone already in a live match, but the two can diverge after the fact: a
+  // queued player can accept a username invite and have that match started under them. Left in
+  // the queue they would be dealt into a second live match and charged Energy twice. Dropped
+  // here rather than at selection time so the bucket counts a player sees are honest too.
+  await c.query(
+    `DELETE FROM matchmaking_queue q
+      WHERE EXISTS (SELECT 1 FROM match_players mp
+                      JOIN matches m ON m.id = mp.match_id
+                     WHERE mp.user_id = q.user_id AND mp.state = 'JOINED'
+                       AND m.status = 'ACTIVE')`
+  );
+
   const { rows: buckets } = await c.query<{
     mode: "DUEL" | "GROUP";
     size: number;
