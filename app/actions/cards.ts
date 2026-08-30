@@ -1,8 +1,15 @@
 "use server";
 
 import type { PoolClient } from "pg";
-import { ASSET_MAP, CFG, EXPIRIES, type AssetSymbol } from "@/lib/config";
+import {
+  ASSET_MAP,
+  CFG,
+  MAX_EXPIRY_SECONDS,
+  MIN_EXPIRY_SECONDS,
+  type AssetSymbol,
+} from "@/lib/config";
 import { GameError, fail, q, tx } from "@/lib/db";
+import { duration } from "@/lib/fmt";
 import { spendEnergy } from "@/lib/energy";
 import { cardValue, collateralFor, exerciseCost, exercisePayout, quotePremium } from "@/lib/options";
 import { getPrice } from "@/lib/prices";
@@ -72,7 +79,13 @@ export async function createCard(input: CreateInput): Promise<Res> {
     const matchId = input.matchId ?? null;
 
     if (!ASSET_MAP[input.asset]) fail("unknown asset");
-    if (!EXPIRIES.some((e) => e.seconds === input.seconds)) fail("invalid expiry");
+    // The presets are shortcuts, not a whitelist — any horizon inside the bounds is the
+    // player's call. A PvP card is additionally capped by assertMatchWindow below.
+    if (!Number.isFinite(input.seconds) || !Number.isInteger(input.seconds)) fail("invalid expiry");
+    if (input.seconds < MIN_EXPIRY_SECONDS)
+      fail(`The shortest expiry is ${duration(MIN_EXPIRY_SECONDS)}`);
+    if (input.seconds > MAX_EXPIRY_SECONDS)
+      fail(`The longest expiry is ${duration(MAX_EXPIRY_SECONDS)}`);
     if (!(input.amount > 0) || !Number.isFinite(input.amount)) fail("invalid amount");
     if (!Number.isFinite(input.strikePct) || Math.abs(input.strikePct) > 50)
       fail("strike must be within ±50% of spot");

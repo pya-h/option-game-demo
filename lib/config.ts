@@ -88,12 +88,36 @@ export const ASSET_MAP = Object.fromEntries(ASSETS.map((a) => [a.symbol, a])) as
   (typeof ASSETS)[number]
 >;
 
-// Expiry choices, in seconds. Short by design so a demo session shows cards actually resolve.
+/**
+ * Expiry presets, in seconds. In the main game these are shortcuts, not limits — how long to
+ * commit for is the player's call, and anything between the bounds below is accepted. The
+ * short end is still listed first so a demo session shows cards actually resolving.
+ */
 export const EXPIRIES = [
-  { label: "2m", seconds: 120 },
+  { label: "1m", seconds: 60 },
   { label: "5m", seconds: 300 },
   { label: "15m", seconds: 900 },
   { label: "1h", seconds: 3600 },
+  { label: "6h", seconds: 21600 },
+  { label: "1d", seconds: 86400 },
+  { label: "1w", seconds: 604800 },
+  { label: "1M", seconds: 2592000 },
+];
+
+/**
+ * Bounds on a custom expiry. The floor keeps a card from expiring before the poll that would
+ * settle it; the ceiling exists only because expires_at is a real timestamp and the pricing
+ * model needs a finite horizon — it is deliberately far past anything a player would pick.
+ */
+export const MIN_EXPIRY_SECONDS = 60;
+export const MAX_EXPIRY_SECONDS = 365 * 24 * 3600;
+
+/** Units offered by the custom-expiry input, and by the custom match-duration input. */
+export const DURATION_UNITS = [
+  { label: "min", seconds: 60 },
+  { label: "hours", seconds: 3600 },
+  { label: "days", seconds: 86400 },
+  { label: "weeks", seconds: 604800 },
 ];
 
 export const MATCH_DURATIONS = [5, 10, 15, 30];
