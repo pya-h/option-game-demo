@@ -130,12 +130,12 @@ becomes a risk-free money pump that breaks the leaderboard.
 
 ## How the numbers work
 
-**Pricing.** Both card types are call-shaped, so one model prices both — intrinsic value plus an
-at-the-money Black-Scholes approximation for time value:
+**Pricing.** Both card types are call-shaped, so one model prices both — intrinsic value plus time
+value:
 
 ```
 intrinsic  = max(0, spot − strike) × amount
-timeValue  = 0.4 × spot × amount × vol × √T
+timeValue  = spot × amount × vol × TIME_VALUE_AT_REFERENCE × (secondsLeft / REFERENCE_SECONDS) ^ 0.25
 value$     = intrinsic + timeValue
 premiumOPT = ceil(value$ × PREMIUM_OPT_PER_DOLLAR)
 ```
@@ -143,9 +143,16 @@ premiumOPT = ceil(value$ × PREMIUM_OPT_PER_DOLLAR)
 Premiums are always computed server-side from the cached price — never taken from the client. The
 same function drives the live "Current Value" on every card face.
 
-`GAME_VOL_MULTIPLIER` (in `lib/config.ts`) scales volatility up by 12×. Real annualised vol over a
-2–15 minute option produces a premium of almost nothing, which would make Sell Options pointless
-and Buy Options free. It's a plain constant rather than an env var because the pricing model runs
+The time-value curve is anchored rather than derived. Black-Scholes grows as `√T`, which is right
+for a real option and wrong here at both ends: over two minutes it prices a card at nothing, and
+over a month it wants 76% of notional. `TIME_VALUE_AT_REFERENCE` is the fraction of notional an
+at-the-money card costs at `REFERENCE_SECONDS` (15 minutes) for an asset with vol 1.0, and the 0.25
+exponent sets how fast it grows from there — a 1h card costs ~2.3× a 2m card, and a 1-month card
+lands near 10% of notional. Expiry still matters; it no longer dominates every other choice on the
+card. Dependence on **amount** stays exactly linear, since that's the one relationship players
+expect to be precise.
+
+These live in `lib/config.ts` as plain constants rather than env vars because the pricing model runs
 on both the server and the client, and a client bundle can't read the server env.
 
 **Settlement.** At expiry the current spot is snapshotted into the card, so exercising later can't

@@ -14,15 +14,26 @@ const list = (k: string, d: number[]) => {
 };
 
 /**
- * Volatility multiplier applied to the pricing model. Real annualised vol over a 2-15 minute
- * option produces a premium of roughly nothing, which would make writing Sell Options
- * pointless and Buy Options free. This scales time value up to game pace.
+ * Time-value curve for the premium model.
  *
- * Deliberately a plain constant, not an env knob: the pricing model runs on both the server
+ * Black-Scholes time value grows as sqrt(T), which is right for a real option and wrong for
+ * this game twice over: over a 2-minute horizon it prices a card at roughly nothing, and over
+ * a 1-month horizon (which the main game now allows) it wanted 76% of notional. Scaling
+ * volatility up to fix the first end only made the second end worse.
+ *
+ * So the curve is anchored rather than derived. TIME_VALUE_AT_REFERENCE is the fraction of
+ * notional an at-the-money card costs at REFERENCE_SECONDS for an asset with vol 1.0, and
+ * TIME_VALUE_EXPONENT sets how fast it grows from there. At 0.25 a 1h card costs ~2.3x a 2m
+ * card rather than ~5.5x, and a 1-month card lands near 10% of notional — expiry still
+ * matters, it just no longer dominates every other choice on the card.
+ *
+ * Deliberately plain constants, not env knobs: the pricing model runs on both the server
  * (authoritative) and the client (live quotes), and a client bundle can't read the server env,
- * so an env-driven value here would silently quote two different numbers.
+ * so env-driven values here would silently quote two different numbers.
  */
-export const GAME_VOL_MULTIPLIER = 12;
+export const REFERENCE_SECONDS = 900;
+export const TIME_VALUE_AT_REFERENCE = 0.026;
+export const TIME_VALUE_EXPONENT = 0.25;
 
 export const CFG = {
   INITIAL_OPT_BALANCE: num("INITIAL_OPT_BALANCE", 10000),

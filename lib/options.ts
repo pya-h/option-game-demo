@@ -1,11 +1,19 @@
-import { ASSET_MAP, CFG, GAME_VOL_MULTIPLIER, type AssetSymbol } from "./config";
-
-const SECONDS_PER_YEAR = 365 * 24 * 3600;
+import {
+  ASSET_MAP,
+  CFG,
+  REFERENCE_SECONDS,
+  TIME_VALUE_AT_REFERENCE,
+  TIME_VALUE_EXPONENT,
+  type AssetSymbol,
+} from "./config";
 
 /**
- * Card value in virtual dollars. Both card kinds are call-shaped (IDEA.md §5/§10),
- * so one model prices both: intrinsic + an ATM Black-Scholes approximation for time value
- * (0.4 * S * sigma * sqrt(T)).
+ * Card value in virtual dollars. Both card kinds are call-shaped (IDEA.md §5/§10), so one
+ * model prices both: intrinsic value plus time value.
+ *
+ * Time value is notional * vol * a curve anchored at REFERENCE_SECONDS (see config.ts for
+ * why it isn't sqrt(T)). Notional keeps the dependence on amount linear — doubling the
+ * amount doubles the premium, which is the one relationship players expect to be exact.
  */
 export function cardValue(args: {
   asset: AssetSymbol;
@@ -15,11 +23,16 @@ export function cardValue(args: {
   secondsLeft: number;
 }) {
   const { asset, strike, amount, spot } = args;
-  const vol = (ASSET_MAP[asset]?.vol ?? 0.8) * GAME_VOL_MULTIPLIER;
-  const T = Math.max(0, args.secondsLeft) / SECONDS_PER_YEAR;
+  const vol = ASSET_MAP[asset]?.vol ?? 0.8;
+  const seconds = Math.max(0, args.secondsLeft);
 
   const intrinsic = Math.max(0, spot - strike) * amount;
-  const timeValue = 0.4 * spot * amount * vol * Math.sqrt(T);
+  const timeValue =
+    spot *
+    amount *
+    vol *
+    TIME_VALUE_AT_REFERENCE *
+    Math.pow(seconds / REFERENCE_SECONDS, TIME_VALUE_EXPONENT);
 
   return {
     intrinsic,
