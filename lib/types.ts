@@ -22,6 +22,7 @@ export type CardDTO = {
   settle_price: number | null;
   /** Set when a Buy card settles WON: when the claim stops being available. */
   exercise_deadline: string | null;
+  settled_at: string | null;
   for_sale: boolean;
   ask: number | null;
 };

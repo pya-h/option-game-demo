@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { CFG, type AssetSymbol } from "./config";
 import { tx } from "./db";
-import { exerciseCost, exerciseDeadline, exercisePayout, sellLoss } from "./options";
+import { exerciseCost, exercisePayout, exerciseWindowSeconds, sellLoss } from "./options";
 import { runMatchmakingInTx } from "./game/matchmaking";
 import { getPrices } from "./prices";
 
@@ -26,6 +26,12 @@ type DueCard = {
   expires_at: string;
 };
 
+/** How long a card ran, which is what sizes its claim window. */
+const exerciseWindowFor = (createdAt: string, expiresAt: string) =>
+  exerciseWindowSeconds(
+    (new Date(expiresAt).getTime() - new Date(createdAt).getTime()) / 1000
+  );
+
 /** Columns settleCard needs, in one place so every query that feeds it stays in step. */
 const DUE_COLUMNS =
   "id, match_id, owner_id, kind, asset, strike, amount, collateral, created_at, expires_at";
@@ -49,20 +55,24 @@ export async function settleCard(c: PoolClient, card: DueCard, spot: number) {
 
   if (card.kind === "BUY") {
     const won = spot > card.strike;
-    // A win starts a clock. Measured from now rather than from expiry: a card settles on
-    // whichever poll reaches it, and the owner shouldn't lose the gap to our scheduling.
+    // A win starts a clock. Measured from settlement rather than from expiry: a card settles
+    // on whichever poll reaches it, and the owner shouldn't lose that gap to our scheduling.
     //
     // Global cards only. A match already has a clock, and auto-exercises everything affordable
     // at the whistle — a second, shorter deadline inside it could strand a win the player was
     // never given a chance to claim.
-    const deadline =
-      won && !isPvp ? exerciseDeadline(card.created_at, card.expires_at, new Date()) : null;
+    //
+    // The window is computed here but *applied* in SQL, off the same now() that stamps
+    // settled_at. Reading a JS clock instead would leave the two a millisecond or two apart —
+    // and further than that whenever the app server and the database disagree about the time.
+    const window = won && !isPvp ? exerciseWindowFor(card.created_at, card.expires_at) : null;
     await c.query(
       `UPDATE cards
           SET status = $2, settle_price = $3, settled_at = now(), for_sale = FALSE,
-              exercise_deadline = $4
+              exercise_deadline = CASE WHEN $4::int IS NULL THEN NULL
+                                       ELSE now() + make_interval(secs => $4::int) END
         WHERE id = $1`,
-      [card.id, won ? "WON" : "LOST", spot, deadline]
+      [card.id, won ? "WON" : "LOST", spot, window]
     );
     // XP is global-only progression; PvP grants XP once, at match settlement (§29).
     if (won && !isPvp) {

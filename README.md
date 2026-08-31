@@ -21,7 +21,7 @@ Four resources drive everything:
 | **OPT** | The currency. Pays premiums on Buy Options, is earned by writing Sell Options, and is burned to exercise a win. |
 | **Portfolio** | Virtual dollar value — both your **score** and your **purchasing power**. Buys cards from other players, collateralises Sell Options, and buys Energy. |
 | **Energy** | Throttles how many options you can mint. Regenerates over time; entering PvP costs a chunk. |
-| **XP** | Pure progression. A correct option awards XP **even if you never exercise it**. |
+| **XP** | Pure progression, and your **level**. A correct option awards XP **even if you never claim it**. |
 
 **The loop:** spend Energy + OPT to mint a card → keep it or list it on the marketplace → the market
 moves → the card expires → correct calls pay XP → exercise to convert the win into Portfolio →
@@ -208,6 +208,19 @@ staked (notional) and how bold the strike was (distance from spot). Both are fro
 moved would be worthless as a collectible. It carries no mechanical weight — it renames and
 reframes what the card already shows, so it can never become a second, hidden economy.
 
+**Levels.** XP raises a level, and the level is *read* from XP rather than stored — the two can
+never disagree. Thresholds are geometric (`XP_LEVEL_BASE`, then times `XP_LEVEL_FACTOR` each
+step). Every level adds Energy capacity; every fifth adds refill speed and OPT drop size. The
+only progression field actually stored is `level_seen`: which level the player has been *shown*.
+XP lands whenever a poll settles a card, so a level-up is owed rather than fired, and waits until
+someone is there to see it.
+
+**The OPT drip.** A small amount of OPT arrives on its own clock (`ENERGY_REFILL_SECONDS × 2`) so
+a player with no OPT and no Portfolio has a way back in rather than a dead account. It is gated
+on activity, not capped: it stops after `OPT_DRIP_IDLE_DAYS` without a state-changing action.
+Uncapped it would pay an idle account better than a played one; capped it would punish the very
+players it exists for. Missed intervals are forfeited, never banked.
+
 **Settlement.** At expiry the current spot is snapshotted into the card, so exercising later can't
 be gamed by waiting.
 
@@ -216,6 +229,14 @@ be gamed by waiting.
 - **Sell** — at or below strike → collateral released in full, premium kept, XP awarded. Above →
   `loss = min((settle_price − strike) × amount, collateral)`, capped so a player can never go
   negative.
+
+**The claim window.** A win can only be claimed for a while after it settles, scaled to how long
+the card ran — five minutes for a quarter-hour card, up to six hours past a month. It runs from
+settlement rather than expiry, because a card settles on whichever poll reaches it and the owner
+shouldn't lose that gap. Miss it and the card is marked `LAPSED`: still a win, XP intact, simply
+no longer convertible. Claiming also pays `EXERCISE_XP` of its own, so a lapsed window costs
+position on both leaderboards rather than only on Portfolio. Match cards carry no window — the
+whistle is already their only clock.
 
 **Funding an exercise.** Exercising burns the *whole notional* in OPT, not just the profit —
 faithful to a physically settled call, and the reason a player is routinely rich in the dollars
@@ -250,7 +271,7 @@ tier no matter how many clients are polling.
 
 ```
 app/
-  (game)/          home · cards · store · rankings · pvp · pvp/[id]
+  (game)/          home · cards · store · rankings · pvp · pvp/[id] · guide
   actions/         authenticated entry points — resolve the caller, hand off to lib/game
   api/state        global poll — settles, then returns player + prices + cards + queue
   api/pvp/[id]/    match poll — settles, then returns match + players + match cards
@@ -263,7 +284,8 @@ lib/
   rarity.ts        the collectible grade on a card's frame
   settle.ts        expiry resolution + match finalisation + matchmaking pass
   wallet.ts        the single accessor for global vs PvP balances
-  energy.ts        lazy regeneration
+  energy.ts        one lazy accrual pass for Energy and the OPT drip
+  levels.ts        the level curve, and everything a level grants
   game/            the rules: cards, store, pvp, matchmaking
 scripts/
   push.mjs         apply the schema

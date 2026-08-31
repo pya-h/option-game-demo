@@ -84,6 +84,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    case "setXp": {
+      // Reaching a level threshold honestly takes several winning cards. A spec about the
+      // level-up moment should test the moment, not spend itself getting there.
+      await q(`UPDATE users SET xp = $2 WHERE id = $1`, [body.userId, body.xp ?? 0]);
+      return NextResponse.json({ ok: true });
+    }
+
+    case "goAway": {
+      // Backdates every clock so a spec can test what happens to a player who left, without
+      // waiting out days of real time. `days` also ages last_active_at past the drip cutoff.
+      const days: number = body.days ?? 0;
+      await q(
+        `UPDATE users
+            SET last_active_at = last_active_at - make_interval(days => $1::int),
+                opt_updated_at  = opt_updated_at  - make_interval(days => $1::int)
+          WHERE id = $2`,
+        [days, body.userId]
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    case "closeWindows": {
+      // Pull every open claim window into the past, then let the real settler lapse them.
+      await q(
+        `UPDATE cards SET exercise_deadline = now() - interval '1 second'
+          WHERE status = 'WON' AND exercise_deadline IS NOT NULL`
+      );
+      await settleDue();
+      return NextResponse.json({ ok: true });
+    }
+
     case "settle": {
       await settleDue();
       return NextResponse.json({ ok: true });
