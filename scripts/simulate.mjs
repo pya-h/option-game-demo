@@ -41,6 +41,8 @@ const { convertPortfolioToOptFor, buyEnergyChargeFor, buyEnergyCellFor, buyCapac
 const { createMatchFor, respondInviteFor, startMatchFor, endMatchNowFor } = await import(
   "@/lib/game/pvp.ts"
 );
+const { energyCapacity, levelFor } = await import("@/lib/levels.ts");
+const { buyDripUpgradeFor } = await import("@/lib/game/store.ts");
 
 // ---------------------------------------------------------------- args
 
@@ -106,7 +108,8 @@ function log(who, what, res) {
 
 const players = async () =>
   q(
-    `SELECT id, username, opt, portfolio, locked, energy, energy_capacity, xp
+    `SELECT id, username, opt, portfolio, locked, energy, energy_upgrades, xp,
+            drip_upgrades, opt_updated_at, energy_updated_at, last_active_at
        FROM users ORDER BY id`
   );
 
@@ -187,7 +190,7 @@ async function actConvert(p) {
  */
 async function actStore(p) {
   const free = Number(p.portfolio) - Number(p.locked);
-  const room = Number(p.energy) < Number(p.energy_capacity);
+  const room = Number(p.energy) < energyCapacity(levelFor(Number(p.xp)), Number(p.energy_upgrades));
   const choices = [
     // A Charge on a full bar is refused, so don't offer it — the point is to exercise the
     // paths, not to collect rejections.
@@ -196,6 +199,7 @@ async function actStore(p) {
       : []),
     { name: "chip", run: () => buyCapacityChipFor(p.id), cost: CFG.ENERGY_CAPACITY_PRICES[0] },
     { name: "cell", run: () => buyEnergyCellFor(p.id), cost: CFG.ENERGY_CELL_PRICES[0] },
+    { name: "drops", run: () => buyDripUpgradeFor(p.id), cost: CFG.OPT_DRIP_UPGRADE_PRICES[0] },
   ].filter((c) => free >= c.cost);
   if (!choices.length) return false;
 
@@ -261,8 +265,10 @@ async function ensurePlayers() {
     while (names.has(name.toLowerCase())) name = randomName();
     names.add(name.toLowerCase());
     await q(
-      `INSERT INTO users (username, opt, portfolio, energy, energy_capacity, energy_updated_at)
-       VALUES ($1, $2, 0, $3::numeric, $3::integer, now())`,
+      // Capacity is derived from level and purchases now, so a new player only needs a
+      // starting bar — there is no capacity column to seed.
+      `INSERT INTO users (username, opt, portfolio, energy, energy_updated_at)
+       VALUES ($1, $2, 0, $3::numeric, now())`,
       [name, CFG.INITIAL_OPT_BALANCE, CFG.INITIAL_ENERGY_CAPACITY]
     );
     console.log(`${t()}  + ${name}`);

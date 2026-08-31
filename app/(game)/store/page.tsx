@@ -1,10 +1,11 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { BatteryCharging, Battery, Recycle, Zap } from "lucide-react";
+import { Battery, BatteryCharging, Droplets, Recycle, Zap } from "lucide-react";
 import { useState } from "react";
 import {
   buyCapacityChip,
+  buyDripUpgrade,
   buyEnergyCell,
   buyEnergyCharge,
   convertPortfolioToOpt,
@@ -20,12 +21,10 @@ export default function StorePage() {
   const me = state.me;
   const cfg = state.cfg;
 
-  // Clamped the same way the server clamps it, so a player below a raised starting capacity
-  // sees the first tier's price rather than an undefined one.
-  const tier = Math.max(
-    0,
-    Math.round((me.energy_capacity - cfg.initialEnergyCapacity) / cfg.energyCellStep)
-  );
+  // Counted from what has been bought, not inferred from total capacity. Levels raise the
+  // ceiling too, and the old arithmetic read those bonuses as purchases — a high-level player
+  // who owned nothing was charged for a tier they never bought.
+  const tier = Math.max(0, me.energyUpgrades);
   const maxed = tier >= cfg.energyCellPrices.length;
   // Guarded rather than indexed blind: at max tier there is no next price, and `spendable <
   // undefined` is quietly false, which would leave the button enabled on a purchase that
@@ -38,22 +37,36 @@ export default function StorePage() {
   const saving = cellPrice !== null && chipPrice !== null
     ? chipPrice + cfg.energyChargePrice - cellPrice
     : 0;
+  const dripTier = Math.max(0, me.dripUpgrades);
+  const dripMaxed = dripTier >= cfg.optDripUpgradePrices.length;
+  const dripPrice = dripMaxed ? null : cfg.optDripUpgradePrices[dripTier];
 
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold">🏪 Store</h1>
-        <p className="mt-1 text-xs text-mute">
-          Everything here is bought with Portfolio Value — the same number that ranks you. Spending
-          makes you stronger now and costs you leaderboard position.
-        </p>
+      <header className="panel panel-hi flex flex-wrap items-center gap-4 px-5 py-4">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-2xl shadow-lg">
+          🏪
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold">Supply Store</h1>
+          <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-mute">
+            Everything on these shelves is bought with Portfolio Value — the same number that
+            ranks you. Spending makes you stronger now and costs you leaderboard position.
+          </p>
+        </div>
+        <div className="ml-auto rounded-xl border border-edge bg-black/30 px-3.5 py-2 text-right">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-mute">to spend</div>
+          <div className="tabnum font-mono text-lg font-semibold text-mint">
+            {usd(me.spendable, 0)}
+          </div>
+        </div>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {/* Energy Cell — capacity + refill, the bundle */}
         <Item
           icon={Zap}
-          tone="from-amber-400 to-orange-500"
+          tone="#fbbf24"
           title="Energy Cell"
           subtitle="Capacity +, and charged to full"
           badge={saving > 0 ? `save ${usd(saving, 0)}` : undefined}
@@ -84,7 +97,7 @@ export default function StorePage() {
         {/* Capacity Chip — the ceiling only */}
         <Item
           icon={Battery}
-          tone="from-violet-400 to-fuchsia-500"
+          tone="#a855f7"
           title="Capacity Chip"
           subtitle="Raises the ceiling only"
         >
@@ -110,7 +123,7 @@ export default function StorePage() {
         {/* Energy Charge — the bar only */}
         <Item
           icon={BatteryCharging}
-          tone="from-cyan-400 to-blue-500"
+          tone="#22d3ee"
           title="Energy Charge"
           subtitle="Instant refill to full"
         >
@@ -135,10 +148,36 @@ export default function StorePage() {
           </button>
         </Item>
 
+        {/* OPT drip upgrade — one-time, so it can't compound into an income */}
+        <Item
+          icon={Droplets}
+          tone="#38bdf8"
+          title="Bigger Drops"
+          subtitle="Permanently raises the OPT drop"
+        >
+          <div className="mb-3 flex items-center justify-center gap-3 font-mono text-lg">
+            <span className="text-mute">+{num(me.optPerDrip, 0)}</span>
+            <span className="text-buy">→</span>
+            <span className="text-buy">+{num(me.optPerDrip + cfg.optDripUpgradeStep, 0)}</span>
+          </div>
+          <p className="mb-3 text-center text-[11px] text-mute">
+            {dripMaxed
+              ? "Every drop upgrade is yours."
+              : `One-time · ${dripTier + 1} of ${cfg.optDripUpgradePrices.length}`}
+          </p>
+          <button
+            className="btn btn-primary w-full"
+            disabled={busy || dripPrice === null || me.spendable < dripPrice}
+            onClick={() => run(() => buyDripUpgrade())}
+          >
+            {dripPrice === null ? "Fully upgraded" : `Upgrade · ${usd(dripPrice, 0)}`}
+          </button>
+        </Item>
+
         {/* Portfolio -> OPT */}
         <Item
           icon={Recycle}
-          tone="from-emerald-400 to-teal-500"
+          tone="#34d399"
           title="Portfolio → OPT"
           subtitle={`Burn $1 for ${cfg.portfolioToOptRatio} OPT`}
         >
@@ -175,6 +214,20 @@ export default function StorePage() {
   );
 }
 
+/**
+ * One item on the shelf.
+ *
+ * Built like the card art panel — layered gradients, one glyph, no image assets — so the shop
+ * matches the cards rather than looking like a settings screen that wandered in. `tone` is a
+ * single hue per item, which is what makes a row of four read as four distinct objects.
+ */
+/**
+ * One item on the shelf.
+ *
+ * Built like the card art panel — layered gradients, one glyph, no image assets — so the shop
+ * matches the cards rather than looking like a settings screen that wandered in. `tone` is a
+ * single hue per item, which is what makes a row of items read as distinct objects.
+ */
 function Item({
   icon: Icon,
   tone,
@@ -192,26 +245,25 @@ function Item({
 }) {
   return (
     <motion.section
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -4 }}
-      className="panel panel-hi foil flex flex-col p-5"
+      whileHover={{ y: -5 }}
+      transition={{ type: "spring", stiffness: 240, damping: 22 }}
+      className="shelf flex flex-col"
+      style={{ ["--item" as string]: tone }}
     >
-      <div className="mb-3 flex items-start">
-        <div
-          className={`grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br ${tone} text-black shadow-lg`}
-        >
-          <Icon size={22} />
-        </div>
-        {badge && (
-          <span className="ml-auto rounded-full bg-mint/15 px-2 py-0.5 text-[10px] font-semibold text-mint">
-            {badge}
-          </span>
-        )}
+      <div className="shelf-art">
+        <span className="shelf-glyph">
+          <Icon size={26} />
+        </span>
+        {badge && <span className="shelf-tag">{badge}</span>}
       </div>
-      <h2 className="font-semibold">{title}</h2>
-      <p className="mb-4 text-xs text-mute">{subtitle}</p>
-      <div className="mt-auto">{children}</div>
+
+      <div className="flex flex-1 flex-col p-4">
+        <h2 className="font-semibold leading-tight">{title}</h2>
+        <p className="mb-3 text-[11px] text-mute">{subtitle}</p>
+        <div className="mt-auto">{children}</div>
+      </div>
     </motion.section>
   );
 }

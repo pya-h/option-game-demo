@@ -2,7 +2,7 @@
 
 import { Coins, Flame, Star, Wallet, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { num, usd } from "@/lib/fmt";
+import { duration, num, usd } from "@/lib/fmt";
 import { useGame } from "./GameProvider";
 
 /** Eases a number toward its target so balance changes read as a roll-up, not a jump. */
@@ -69,7 +69,7 @@ export default function ResourceBar() {
     );
   }
 
-  const pct = (me.energy / me.energy_capacity) * 100;
+  const pct = (me.energy / Math.max(1, me.energy_capacity)) * 100;
 
   return (
     <div className="mt-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
@@ -78,7 +78,20 @@ export default function ResourceBar() {
         label="OPT"
         tone="bg-cyan-500/15 text-buy"
         value={num(optV, 0)}
-        sub={<div className="text-[11px] text-mute">in-game currency</div>}
+        sub={
+          <div className="text-[11px] text-mute">
+            {me.dripActive ? (
+              <>
+                +{num(me.optPerDrip, 0)} in{" "}
+                <span className="text-buy">{duration(Math.ceil(me.nextOptMs / 1000))}</span>
+              </>
+            ) : (
+              // The drip is gated on having played, so say so rather than showing a timer
+              // that will never fire.
+              <span className="text-mute">play a hand to restart drops</span>
+            )}
+          </div>
+        }
       />
       <Stat
         icon={Wallet}
@@ -114,12 +127,21 @@ export default function ResourceBar() {
       />
       <Stat
         icon={Star}
-        label="XP"
+        label={`Level ${me.level}`}
         tone="bg-fuchsia-500/15 text-sell"
-        value={num(xpV, 0)}
+        value={`${num(xpV, 0)} XP`}
         sub={
-          <div className="flex items-center gap-1 text-[11px] text-mute">
-            <Flame size={11} className="text-sell" /> rank #{me.xpRank} of {me.players}
+          <div className="mt-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-edge">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-fuchsia-400 to-violet-500 transition-[width] duration-700"
+                style={{ width: `${me.levelPct}%` }}
+              />
+            </div>
+            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-mute">
+              <Flame size={10} className="text-sell" />
+              {num(me.levelSpan - me.levelInto, 0)} to L{me.level + 1} · rank #{me.xpRank}
+            </div>
           </div>
         }
       />

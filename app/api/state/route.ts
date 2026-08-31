@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
-import { accrue } from "@/lib/energy";
+import { accrue, persistAccrual } from "@/lib/energy";
 import { heartbeat, queueStatusFor } from "@/lib/game/matchmaking";
+import { levelProgress, optPerDrip } from "@/lib/levels";
 import { getPrices } from "@/lib/prices";
 import { publicCfg } from "@/lib/public-config";
 import { currentUserId } from "@/lib/session";
@@ -26,13 +27,18 @@ export async function GET() {
     if (!u) return NextResponse.json({ error: "auth" }, { status: 401 });
 
     const a = accrue(u);
-    if (a.energy !== u.energy) {
-      await c.query(`UPDATE users SET energy = $2, energy_updated_at = $3 WHERE id = $1`, [
-        uid,
-        a.energy,
-        a.updatedAt,
-      ]);
-    }
+    if (a.energy !== Number(u.energy) || a.dripped) await persistAccrual(c, uid, a);
+
+    // A level-up is owed, not fired. XP arrives whenever a poll happens to settle a card, so
+    // it routinely lands with the player looking elsewhere or logged out entirely; the
+    // celebration waits in level_seen until they are actually here to see it. The payload
+    // reports it and the client acknowledges once it has been shown.
+    const xp = Number(u.xp);
+    const progress = levelProgress(xp);
+    const pending =
+      progress.level > Number(u.level_seen)
+        ? { from: Number(u.level_seen), to: progress.level }
+        : null;
 
     const { rows: ranks } = await c.query(
       `SELECT
@@ -79,14 +85,24 @@ export async function GET() {
       me: {
         id: u.id,
         username: u.username,
-        opt: u.opt,
         portfolio: u.portfolio,
         locked: u.locked,
         spendable: u.portfolio - u.locked,
-        xp: u.xp,
+        xp,
+        level: progress.level,
+        levelInto: progress.into,
+        levelSpan: progress.span,
+        levelPct: progress.pct,
+        pendingLevelUp: pending,
+        opt: a.opt,
         energy: a.energy,
-        energy_capacity: u.energy_capacity,
-        nextEnergyMs: a.nextInMs,
+        energy_capacity: a.capacity,
+        nextEnergyMs: a.energyNextInMs,
+        nextOptMs: a.optNextInMs,
+        optPerDrip: optPerDrip(progress.level, Number(u.drip_upgrades)),
+        dripActive: a.dripActive,
+        energyUpgrades: Number(u.energy_upgrades),
+        dripUpgrades: Number(u.drip_upgrades),
         portfolioRank: ranks[0].prank,
         xpRank: ranks[0].xrank,
         players: ranks[0].players,

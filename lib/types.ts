@@ -1,7 +1,7 @@
 import type { AssetSymbol } from "./config";
 import type { PublicCfg } from "./public-config";
 
-export type CardStatus = "ACTIVE" | "WON" | "LOST" | "EXERCISED" | "SETTLED";
+export type CardStatus = "ACTIVE" | "WON" | "LOST" | "EXERCISED" | "SETTLED" | "LAPSED";
 
 export type CardDTO = {
   id: number;
@@ -20,6 +20,8 @@ export type CardDTO = {
   expires_at: string;
   status: CardStatus;
   settle_price: number | null;
+  /** Set when a Buy card settles WON: when the claim stops being available. */
+  exercise_deadline: string | null;
   for_sale: boolean;
   ask: number | null;
 };
@@ -34,9 +36,22 @@ export type MeDTO = {
   locked: number;
   spendable: number;
   xp: number;
+  level: number;
+  /** XP into the current level, and the span of that level. */
+  levelInto: number;
+  levelSpan: number;
+  levelPct: number;
+  /** A level-up earned but not yet celebrated — XP arrives while nobody is watching. */
+  pendingLevelUp: { from: number; to: number } | null;
   energy: number;
   energy_capacity: number;
   nextEnergyMs: number;
+  /** OPT drip: how much lands, when the next one is due, and whether it still runs. */
+  optPerDrip: number;
+  nextOptMs: number;
+  dripActive: boolean;
+  energyUpgrades: number;
+  dripUpgrades: number;
   portfolioRank: number;
   xpRank: number;
   players: number;

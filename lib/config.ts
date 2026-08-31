@@ -35,8 +35,41 @@ export const REFERENCE_SECONDS = 900;
 export const TIME_VALUE_AT_REFERENCE = 0.026;
 export const TIME_VALUE_EXPONENT = 0.25;
 
+/**
+ * Level curve. The XP needed to reach level n is a geometric series: the step from one level
+ * to the next is the previous step times FACTOR. XP itself is never spent or reset — the level
+ * is a reading of it, so the two can never disagree.
+ *
+ * Plain constants for the same reason the pricing curve is: the curve runs on the client (the
+ * progress bar, the level-up modal) and a client bundle can't read the server env.
+ */
+export const XP_LEVEL_BASE: number = 500;
+export const XP_LEVEL_FACTOR: number = 1.5;
+
+/**
+ * How long a winning card may be claimed after it settles, by how long it originally ran.
+ *
+ * A win that could be exercised forever is a free option with no cost to holding it. The scale
+ * is sublinear on purpose — a 15-minute card gives 5 minutes and an hour-long card 10, so a
+ * longer commitment buys more room to notice, but never proportionally more.
+ */
+export const EXERCISE_WINDOWS: { maxExpiry: number; window: number }[] = [
+  { maxExpiry: 900, window: 300 }, //      <= 15m -> 5m
+  { maxExpiry: 3600, window: 600 }, //      <= 1h -> 10m
+  { maxExpiry: 21600, window: 1800 }, //    <= 6h -> 30m
+  { maxExpiry: 86400, window: 3600 }, //    <= 1d -> 1h
+  { maxExpiry: 604800, window: 7200 }, //   <= 1w -> 2h
+  { maxExpiry: 2592000, window: 14400 }, // <= 30d -> 4h
+];
+
+/** Levels that pay the bigger rewards, and what those rewards are. */
+export const LEVEL_REWARD_EVERY: number = 5;
+export const LEVEL_CAPACITY_PER_LEVEL: number = 1;
+export const LEVEL_REFILL_BONUS: number = 1;
+export const LEVEL_DRIP_BONUS: number = 5;
+
 export const CFG = {
-  INITIAL_OPT_BALANCE: num("INITIAL_OPT_BALANCE", 10000),
+  INITIAL_OPT_BALANCE: num("INITIAL_OPT_BALANCE", 50000),
   PORTFOLIO_TO_OPT_RATIO: num("PORTFOLIO_TO_OPT_RATIO", 5),
   EXERCISE_OPT_PER_DOLLAR: num("EXERCISE_OPT_PER_DOLLAR", 5),
   // "market": exercising credits settle_price * amount (real call payoff).
@@ -55,9 +88,26 @@ export const CFG = {
   PVP_ENERGY_COST: num("PVP_ENERGY_COST", 10),
 
   SUCCESSFUL_OPTION_XP: num("SUCCESSFUL_OPTION_XP", 100),
+  // Paid on top of the settlement XP, so letting a window lapse costs position on both
+  // leaderboards rather than only on Portfolio.
+  EXERCISE_XP: num("EXERCISE_XP", 40),
   PVP_WIN_XP: num("PVP_WIN_XP", 500),
 
-  PVP_INITIAL_OPT: num("PVP_INITIAL_OPT", 10000),
+  /**
+   * A trickle of OPT so a player with no OPT and no Portfolio has a way back in rather than a
+   * dead account. Gated on having played recently: uncapped income for an idle account would
+   * pay more for walking away than for playing.
+   */
+  OPT_DRIP_AMOUNT: num("OPT_DRIP_AMOUNT", 250),
+  OPT_DRIP_IDLE_DAYS: num("OPT_DRIP_IDLE_DAYS", 7),
+  /** One-time purchases that permanently raise the drip. Repeatable would compound. */
+  OPT_DRIP_UPGRADE_PRICES: list("OPT_DRIP_UPGRADE_PRICES", [900, 2000, 4200]),
+  OPT_DRIP_UPGRADE_STEP: num("OPT_DRIP_UPGRADE_STEP", 50),
+
+  /** Ceiling on the exercise window, whatever the curve above would otherwise give. */
+  MAX_EXERCISE_WINDOW_SECONDS: num("MAX_EXERCISE_WINDOW_SECONDS", 21600),
+
+  PVP_INITIAL_OPT: num("PVP_INITIAL_OPT", 20000),
   PVP_WIN_OPT_REWARD: num("PVP_WIN_OPT_REWARD", 300),
   PVP_WIN_PORTFOLIO_REWARD: num("PVP_WIN_PORTFOLIO_REWARD", 250),
 

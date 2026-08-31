@@ -16,11 +16,11 @@ export async function login(formData: FormData) {
   // sign-ins for the same name both miss, both insert, and the loser hits the case-insensitive
   // unique index and gets a 500 instead of simply resuming the account that just won.
   const [row] = await q<{ id: number }>(
-    // energy is numeric and energy_capacity is integer, so the shared parameter needs
-    // explicit casts — Postgres can't deduce one type for both.
+    // Capacity is derived from level and purchases, so there is no column to seed — only the
+    // starting bar, which begins full at the level-1 ceiling.
     `WITH inserted AS (
-       INSERT INTO users (username, opt, portfolio, energy, energy_capacity, energy_updated_at)
-       VALUES ($1, $2, 0, $3::numeric, $3::integer, now())
+       INSERT INTO users (username, opt, portfolio, energy, energy_updated_at)
+       VALUES ($1, $2, 0, $3::numeric, now())
        ON CONFLICT (lower(username)) DO NOTHING
        RETURNING id
      )

@@ -8,6 +8,10 @@ DROP TABLE IF EXISTS matches CASCADE;
 DROP TABLE IF EXISTS price_cache CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
+-- Progression is derived, not stored. Level comes from xp, and Energy capacity comes from the
+-- level plus the upgrades bought — so there is no second number that can drift away from the
+-- first. The only stored progression fields are the ones that genuinely aren't derivable:
+-- what the player has *bought*, and what they have already been *shown*.
 CREATE TABLE users (
   id                SERIAL PRIMARY KEY,
   username          TEXT NOT NULL,
@@ -15,12 +19,25 @@ CREATE TABLE users (
   portfolio         NUMERIC(20,6) NOT NULL DEFAULT 0,
   locked            NUMERIC(20,6) NOT NULL DEFAULT 0,
   xp                INTEGER NOT NULL DEFAULT 0,
+  -- The level the player has actually seen celebrated. XP arrives while nobody is watching —
+  -- a month-long card settles on whichever poll happens to reach it — so the level-up moment
+  -- is owed until this catches up, not fired at the instant the threshold is crossed.
+  level_seen        INTEGER NOT NULL DEFAULT 1,
   energy            NUMERIC(10,4) NOT NULL DEFAULT 0,
-  energy_capacity   INTEGER NOT NULL DEFAULT 50,
   energy_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Energy Cells and Capacity Chips both grant one step; only the count matters for pricing.
+  energy_upgrades   INTEGER NOT NULL DEFAULT 0,
+  -- OPT accrues on its own, slower clock, so it needs its own timestamp: sharing Energy's
+  -- would round every drip away.
+  opt_updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  drip_upgrades     INTEGER NOT NULL DEFAULT 0,
+  -- Last action that changed game state — not last login (the cookie outlives interest) and
+  -- not last poll (an abandoned tab would collect forever). Gates the OPT drip.
+  last_active_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT users_locked_within_portfolio CHECK (locked <= portfolio),
-  CONSTRAINT users_no_negative CHECK (opt >= 0 AND portfolio >= 0 AND locked >= 0)
+  CONSTRAINT users_no_negative CHECK (opt >= 0 AND portfolio >= 0 AND locked >= 0),
+  CONSTRAINT users_upgrades_non_negative CHECK (energy_upgrades >= 0 AND drip_upgrades >= 0)
 );
 
 -- Sign-in looks accounts up case-insensitively, so uniqueness has to match. A plain UNIQUE on
@@ -87,10 +104,15 @@ CREATE TABLE cards (
   collateral     NUMERIC(20,6) NOT NULL DEFAULT 0,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at     TIMESTAMPTZ NOT NULL,
+  -- LAPSED: won, but the exercise window closed before the owner claimed it. Still a win —
+  -- the XP was paid at settlement — just no longer convertible into Portfolio.
   status         TEXT NOT NULL DEFAULT 'ACTIVE'
-                 CHECK (status IN ('ACTIVE','WON','LOST','EXERCISED','SETTLED')),
+                 CHECK (status IN ('ACTIVE','WON','LOST','EXERCISED','SETTLED','LAPSED')),
   settle_price   NUMERIC(20,6),
   settled_at     TIMESTAMPTZ,
+  -- Stamped when a Buy card settles WON. Derivable from settled_at and the original expiry,
+  -- but stored so the settler can find due cards with an index instead of loading every win.
+  exercise_deadline TIMESTAMPTZ,
   for_sale       BOOLEAN NOT NULL DEFAULT FALSE,
   -- BUY: asking price in Portfolio $. SELL: takeover premium in OPT paid to the assumer.
   ask            NUMERIC(20,6)
@@ -100,6 +122,7 @@ CREATE INDEX cards_match_status_idx ON cards (match_id, status);
 CREATE INDEX cards_owner_idx        ON cards (owner_id);
 CREATE INDEX cards_for_sale_idx     ON cards (for_sale) WHERE for_sale;
 CREATE INDEX cards_due_idx          ON cards (expires_at) WHERE status = 'ACTIVE';
+CREATE INDEX cards_window_idx       ON cards (exercise_deadline) WHERE status = 'WON';
 
 CREATE TABLE card_events (
   id               SERIAL PRIMARY KEY,

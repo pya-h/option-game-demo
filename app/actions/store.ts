@@ -4,6 +4,7 @@
 import type { Res } from "@/lib/game/guard";
 import {
   buyCapacityChipFor,
+  buyDripUpgradeFor,
   buyEnergyCellFor,
   buyEnergyChargeFor,
   convertPortfolioToOptFor,
@@ -24,4 +25,8 @@ export async function buyCapacityChip(): Promise<Res> {
 
 export async function buyEnergyCharge(): Promise<Res> {
   return buyEnergyChargeFor((await requireMe()).id);
+}
+
+export async function buyDripUpgrade(): Promise<Res> {
+  return buyDripUpgradeFor((await requireMe()).id);
 }

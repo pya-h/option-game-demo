@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { GameProvider } from "@/components/GameProvider";
 import Confetti from "@/components/Confetti";
+import LevelUp from "@/components/LevelUp";
 import LiveMatchBar from "@/components/LiveMatchBar";
 import Nav from "@/components/Nav";
 import PriceTicker from "@/components/PriceTicker";
@@ -13,7 +14,7 @@ export default async function GameLayout({ children }: { children: React.ReactNo
 
   return (
     <GameProvider>
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-16">
+      <div className="mx-auto flex min-h-screen max-w-[88rem] flex-col px-4 pb-16">
         <Nav />
         <LiveMatchBar />
         <PriceTicker />
@@ -25,6 +26,7 @@ export default async function GameLayout({ children }: { children: React.ReactNo
       </div>
       <Toaster />
       <Confetti />
+      <LevelUp />
     </GameProvider>
   );
 }

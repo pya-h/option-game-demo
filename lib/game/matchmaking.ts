@@ -19,7 +19,7 @@ import {
   QUEUE_TIMEOUT_SECONDS,
 } from "@/lib/config";
 import { fail, tx } from "@/lib/db";
-import { accrue } from "@/lib/energy";
+import { ACCRUAL_COLUMNS, accrue, touchActivity } from "@/lib/energy";
 import { type Res, guard } from "./guard";
 
 export type QueueRequest = { mode: "DUEL" | "GROUP"; size: number; durationMin: number };
@@ -42,7 +42,7 @@ export async function joinQueueFor(userId: number, input: QueueRequest): Promise
       // Checked here as well as at form time, so a player without the Energy to play is told
       // now rather than after sitting in a queue.
       const { rows } = await c.query(
-        `SELECT energy, energy_capacity, energy_updated_at FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT ${ACCRUAL_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`,
         [userId]
       );
       if (!rows[0]) fail("player not found");
@@ -66,6 +66,7 @@ export async function joinQueueFor(userId: number, input: QueueRequest): Promise
         [userId, input.mode, size, durationMin]
       );
 
+      await touchActivity(c, userId);
       return {
         ok: true,
         message:
@@ -189,7 +190,7 @@ async function formOne(
   const paid: number[] = [];
   for (const w of waiting) {
     const { rows } = await c.query(
-      `SELECT energy, energy_capacity, energy_updated_at FROM users WHERE id = $1 FOR UPDATE`,
+      `SELECT ${ACCRUAL_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`,
       [w.user_id]
     );
     if (!rows[0]) continue;
@@ -198,11 +199,11 @@ async function formOne(
       await c.query(`DELETE FROM matchmaking_queue WHERE user_id = $1`, [w.user_id]);
       continue;
     }
-    await c.query(`UPDATE users SET energy = $2, energy_updated_at = $3 WHERE id = $1`, [
-      w.user_id,
-      a.energy - CFG.PVP_ENERGY_COST,
-      a.updatedAt,
-    ]);
+    await c.query(
+      `UPDATE users SET energy = $2, energy_updated_at = $3, opt = opt + $4, opt_updated_at = $5
+        WHERE id = $1`,
+      [w.user_id, a.energy - CFG.PVP_ENERGY_COST, a.energyUpdatedAt, a.dripped, a.optUpdatedAt]
+    );
     paid.push(w.user_id);
   }
 

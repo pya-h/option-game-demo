@@ -3,7 +3,7 @@
  */
 import { CFG, MAX_MATCH_MINUTES, MIN_MATCH_MINUTES } from "@/lib/config";
 import { fail, q, tx } from "@/lib/db";
-import { spendEnergy } from "@/lib/energy";
+import { spendEnergy, touchActivity } from "@/lib/energy";
 import { getPrices } from "@/lib/prices";
 import { SETTLE_LOCK_KEY, finalizeMatchInTx } from "@/lib/settle";
 import { type Res, guard } from "./guard";
@@ -108,6 +108,7 @@ export async function respondInviteFor(userId: number, matchId: number, accept: 
       // Taking a named invite is a decision to play *this* match; leaving a random search
       // running alongside it would only queue them into a second one.
       await c.query(`DELETE FROM matchmaking_queue WHERE user_id = $1`, [me.id]);
+      await touchActivity(c, me.id);
       return {
         ok: true,
         message: `Joined · −${CFG.PVP_ENERGY_COST} Energy · ${CFG.PVP_INITIAL_OPT} PvP OPT`,
@@ -142,6 +143,7 @@ export async function startMatchFor(userId: number, matchId: number): Promise<Pv
         `UPDATE match_players SET state = 'DECLINED' WHERE match_id = $1 AND state = 'INVITED'`,
         [matchId]
       );
+      await touchActivity(c, me.id);
       return { ok: true, message: `Match started · ${m.duration_min} minutes on the clock` };
     });
   });
@@ -175,6 +177,7 @@ export async function pvpConvertFor(userId: number, matchId: number, usdAmount: 
           WHERE match_id = $1 AND user_id = $2`,
         [matchId, me.id, usdAmount, gained]
       );
+      await touchActivity(c, me.id);
       return { ok: true, message: `Burned $${usdAmount.toFixed(0)} → +${gained.toFixed(0)} PvP OPT` };
     });
   });

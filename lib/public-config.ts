@@ -19,6 +19,11 @@ export type PublicCfg = {
   energyCapacityPrices: number[];
   energyCellStep: number;
   energyChargePrice: number;
+  optDripUpgradePrices: number[];
+  optDripUpgradeStep: number;
+  optDripIdleDays: number;
+  exerciseXp: number;
+  maxExerciseWindowSeconds: number;
   pvpInitialOpt: number;
   pvpWinXp: number;
   pvpWinOpt: number;
@@ -40,6 +45,11 @@ export function publicCfg(): PublicCfg {
     energyCapacityPrices: CFG.ENERGY_CAPACITY_PRICES,
     energyCellStep: CFG.ENERGY_CELL_STEP,
     energyChargePrice: CFG.ENERGY_CHARGE_PRICE,
+    optDripUpgradePrices: CFG.OPT_DRIP_UPGRADE_PRICES,
+    optDripUpgradeStep: CFG.OPT_DRIP_UPGRADE_STEP,
+    optDripIdleDays: CFG.OPT_DRIP_IDLE_DAYS,
+    exerciseXp: CFG.EXERCISE_XP,
+    maxExerciseWindowSeconds: CFG.MAX_EXERCISE_WINDOW_SECONDS,
     pvpInitialOpt: CFG.PVP_INITIAL_OPT,
     pvpWinXp: CFG.PVP_WIN_XP,
     pvpWinOpt: CFG.PVP_WIN_OPT_REWARD,

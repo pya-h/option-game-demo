@@ -11,8 +11,12 @@ export type Me = {
   locked: number;
   xp: number;
   energy: number;
-  energy_capacity: number;
+  // Capacity is derived from level and purchases, so it is not a column here — only the
+  // inputs to it are.
+  energy_upgrades: number;
   energy_updated_at: string;
+  drip_upgrades: number;
+  level_seen: number;
 };
 
 export async function currentUserId(): Promise<number | null> {

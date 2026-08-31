@@ -3,9 +3,9 @@
  */
 import { CFG } from "@/lib/config";
 import { fail, tx } from "@/lib/db";
-import { accrue } from "@/lib/energy";
+import { ACCRUAL_COLUMNS, accrue, touchActivity } from "@/lib/energy";
+import { energyCapacity, levelFor } from "@/lib/levels";
 import { type Res, guard } from "./guard";
-
 
 /** Burn Portfolio Value for OPT (§12). The strategic cost is leaderboard position. */
 export async function convertPortfolioToOptFor(userId: number, usdAmount: number): Promise<Res> {
@@ -28,19 +28,22 @@ export async function convertPortfolioToOptFor(userId: number, usdAmount: number
         usdAmount,
         gained,
       ]);
+      await touchActivity(c, me.id);
       return { ok: true, message: `Burned $${usdAmount.toFixed(0)} → +${gained.toFixed(0)} OPT` };
     });
   });
 }
 
 /**
- * Which tier of capacity upgrade the player is on. Clamped at 0: players created before an
- * INITIAL_ENERGY_CAPACITY change sit below the new baseline, which would otherwise index the
- * price table negatively and charge NaN. Capacity Chips and Energy Cells share the index —
- * they grant the same step, so buying either raises the price of the next one.
+ * Which tier of capacity upgrade the player is on: simply how many they have bought.
+ *
+ * This used to be inferred from total capacity, as `(capacity - INITIAL) / STEP`. That worked
+ * only while purchases were the sole thing that moved capacity. Now a level raises it too, and
+ * the old arithmetic would read level bonuses as purchases — a level 6 player who owns nothing
+ * would be charged tier-2 prices for their first Cell. Counting what was bought keeps
+ * progression and spending from writing to the same number.
  */
-export const capacityTier = (capacity: number) =>
-  Math.max(0, Math.round((capacity - CFG.INITIAL_ENERGY_CAPACITY) / CFG.ENERGY_CELL_STEP));
+export const capacityTier = (upgradesBought: number) => Math.max(0, upgradesBought);
 
 /**
  * Raises capacity by one step, optionally topping the bar up to the new ceiling.
@@ -56,30 +59,31 @@ async function upgradeCapacity(userId: number, refill: boolean): Promise<Res> {
   return guard(async () => {
     return await tx(async (c) => {
       const { rows } = await c.query(
-        `SELECT portfolio, locked, energy, energy_capacity, energy_updated_at
-           FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT portfolio, locked, ${ACCRUAL_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`,
         [userId]
       );
       const u = rows[0];
       if (!u) fail("player not found");
 
       const prices = refill ? CFG.ENERGY_CELL_PRICES : CFG.ENERGY_CAPACITY_PRICES;
-      const tier = capacityTier(u.energy_capacity);
+      const tier = capacityTier(u.energy_upgrades);
       if (tier >= prices.length) fail("Maximum Energy capacity reached");
 
       const cost = prices[tier];
       const free = u.portfolio - u.locked;
       if (free < cost) fail(`Need $${cost} free Portfolio — you have $${free.toFixed(0)}`);
 
-      const newCap = u.energy_capacity + CFG.ENERGY_CELL_STEP;
+      const bought = Number(u.energy_upgrades) + 1;
+      const newCap = energyCapacity(levelFor(Number(u.xp)), bought);
       const energy = refill ? newCap : accrue(u).energy;
       await c.query(
         `UPDATE users
-            SET portfolio = portfolio - $2, energy_capacity = $3,
+            SET portfolio = portfolio - $2, energy_upgrades = $3,
                 energy = $4, energy_updated_at = now()
           WHERE id = $1`,
-        [userId, cost, newCap, energy]
+        [userId, cost, bought, energy]
       );
+      await touchActivity(c, userId);
       return {
         ok: true,
         message: refill
@@ -102,13 +106,13 @@ export async function buyEnergyChargeFor(userId: number): Promise<Res> {
     const me = { id: userId };
     return await tx(async (c) => {
       const { rows } = await c.query(
-        `SELECT portfolio, locked, energy, energy_capacity, energy_updated_at
-           FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT portfolio, locked, ${ACCRUAL_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`,
         [me.id]
       );
       const u = rows[0];
-      const cur = accrue(u).energy;
-      if (cur >= u.energy_capacity) fail("Your Energy is already full");
+      if (!u) fail("player not found");
+      const a = accrue(u);
+      if (a.energy >= a.capacity) fail("Your Energy is already full");
 
       const free = u.portfolio - u.locked;
       const cost = CFG.ENERGY_CHARGE_PRICE;
@@ -116,9 +120,47 @@ export async function buyEnergyChargeFor(userId: number): Promise<Res> {
 
       await c.query(
         `UPDATE users SET portfolio = portfolio - $2, energy = $3, energy_updated_at = now() WHERE id = $1`,
-        [me.id, cost, u.energy_capacity]
+        [me.id, cost, a.capacity]
       );
-      return { ok: true, message: `Energy refilled to ${u.energy_capacity}` };
+      await touchActivity(c, me.id);
+      return { ok: true, message: `Energy refilled to ${a.capacity}` };
+    });
+  });
+}
+
+/**
+ * A permanent, one-time increase to the OPT drip.
+ *
+ * One-time is the whole design. A repeatable drip upgrade compounds into an income, which is
+ * the trap the activity gate exists to avoid — the drip is there so a broke player has a way
+ * back in, not so a rich one can farm it.
+ */
+export async function buyDripUpgradeFor(userId: number): Promise<Res> {
+  return guard(async () => {
+    return await tx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT portfolio, locked, drip_upgrades FROM users WHERE id = $1 FOR UPDATE`,
+        [userId]
+      );
+      const u = rows[0];
+      if (!u) fail("player not found");
+
+      const tier = Math.max(0, Number(u.drip_upgrades));
+      if (tier >= CFG.OPT_DRIP_UPGRADE_PRICES.length) fail("Every drop upgrade is already yours");
+
+      const cost = CFG.OPT_DRIP_UPGRADE_PRICES[tier];
+      const free = u.portfolio - u.locked;
+      if (free < cost) fail(`Need $${cost} free Portfolio — you have $${free.toFixed(0)}`);
+
+      await c.query(
+        `UPDATE users SET portfolio = portfolio - $2, drip_upgrades = $3 WHERE id = $1`,
+        [userId, cost, tier + 1]
+      );
+      await touchActivity(c, userId);
+      return {
+        ok: true,
+        message: `Drop upgraded · +${CFG.OPT_DRIP_UPGRADE_STEP} OPT every drop`,
+      };
     });
   });
 }
