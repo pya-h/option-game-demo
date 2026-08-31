@@ -61,25 +61,42 @@ export default function QuickMatch() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
           >
-            <div className="mb-3 flex items-center gap-3 rounded-xl border border-buy/40 bg-buy/10 px-3.5 py-3">
+            <div className="radar-well mb-3 flex items-center gap-3 px-3.5 py-3">
               <Loader2 size={18} className="animate-spin text-buy" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold">
                   {queue.mode === "DUEL" ? "Finding an opponent…" : `Finding ${queue.size} players…`}
                 </div>
                 <div className="tabnum text-[11px] text-mute">
-                  {have} of {target} ready · {fmtDuration(queue.durationMin * 60)} match ·{" "}
-                  {fmtDuration(elapsed)} elapsed
+                  {fmtDuration(queue.durationMin * 60)} match · {fmtDuration(elapsed)} elapsed
                 </div>
               </div>
             </div>
 
-            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-              <motion.div
-                className="h-full rounded-full bg-buy"
-                animate={{ width: `${Math.min(100, (have / target) * 100)}%` }}
-                transition={{ type: "spring", stiffness: 120, damping: 20 }}
-              />
+            {/* Seats, not a percentage: a bucket fills one player at a time, and "3 of 5" is
+                a thing you can feel where "60%" is a thing you have to read. */}
+            <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
+              {Array.from({ length: target }, (_, i) => {
+                const taken = i < have;
+                return (
+                  <motion.span
+                    key={i}
+                    initial={false}
+                    animate={
+                      taken
+                        ? { scale: [1, 1.18, 1], opacity: 1 }
+                        : { scale: 1, opacity: 0.45 }
+                    }
+                    transition={{ duration: 0.45 }}
+                    className={`seat ${taken ? "seat-on" : ""}`}
+                  >
+                    {taken ? <Users size={13} /> : <span className="text-[10px]">?</span>}
+                  </motion.span>
+                );
+              })}
+              <span className="tabnum ml-1 font-mono text-xs text-mute">
+                {have}/{target}
+              </span>
             </div>
 
             <p className="mb-3 text-[11px] leading-relaxed text-mute">

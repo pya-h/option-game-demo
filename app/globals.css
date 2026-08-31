@@ -555,3 +555,293 @@ input[type="range"]::-moz-range-thumb {
 .tabnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+   Level up
+   ============================================================ */
+
+.levelup-rays {
+  width: 140vmax;
+  height: 140vmax;
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(251, 191, 36, 0.13) 0deg 4deg,
+    transparent 4deg 16deg
+  );
+  mask-image: radial-gradient(circle at 50% 50%, #000 5%, transparent 55%);
+}
+
+.levelup-card {
+  border-radius: 1.25rem;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: linear-gradient(165deg, rgba(38, 30, 18, 0.96), rgba(10, 12, 24, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 0 60px -12px rgba(251, 191, 36, 0.6),
+    0 30px 80px -40px #000;
+}
+
+.levelup-badge {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: #241300;
+  background: linear-gradient(135deg, #fde68a, #f59e0b 55%, #f97316);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.55),
+    0 0 40px -6px rgba(251, 191, 36, 0.95);
+}
+
+/* A player who asked for less motion gets the moment without the spin. */
+@media (prefers-reduced-motion: reduce) {
+  .levelup-rays {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
+   Cursor
+   A themed pointer with a mode for each state the UI already has: idle, over something
+   interactive, over something blocked, and busy. Pure CSS with inline SVG data-URIs — no
+   script, no requests, nothing running per frame.
+
+   Two rules keep it usable rather than merely themed:
+     - every declaration carries a native keyword fallback, so a cursor that fails to load
+       degrades to the right system cursor instead of to an arrow;
+     - text and form controls keep their native cursors entirely. A themed cursor over a text
+       field costs real precision and buys nothing.
+   The hotspot coordinates after each URL are the tip of the glyph, so the cursor clicks
+   exactly where it points.
+   ============================================================ */
+
+:root {
+  --cur-default: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 3 L5 21 L10 16.5 L13.2 24 L16.6 22.4 L13.5 15.2 L20 15 Z' fill='%2305060d' stroke='%2322d3ee' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E") 4 3;
+  --cur-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath d='M5 3 L5 21 L10 16.5 L13.2 24 L16.6 22.4 L13.5 15.2 L20 15 Z' fill='%23fbbf24' stroke='%23241300' stroke-width='1.4' stroke-linejoin='round'/%3E%3Ccircle cx='23.5' cy='6.5' r='3' fill='none' stroke='%23fbbf24' stroke-width='1.6' opacity='.9'/%3E%3C/svg%3E") 4 3;
+  --cur-disabled: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 3 L5 21 L10 16.5 L13.2 24 L16.6 22.4 L13.5 15.2 L20 15 Z' fill='%2313182c' stroke='%237d87b0' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cline x1='18' y1='4' x2='26' y2='12' stroke='%23fb7185' stroke-width='2.2' stroke-linecap='round'/%3E%3Cline x1='26' y1='4' x2='18' y2='12' stroke='%23fb7185' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E") 4 3;
+  --cur-busy: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 3 L5 21 L10 16.5 L13.2 24 L16.6 22.4 L13.5 15.2 L20 15 Z' fill='%2305060d' stroke='%23a855f7' stroke-width='1.6' stroke-linejoin='round'/%3E%3Ccircle cx='22' cy='7' r='3.5' fill='none' stroke='%23a855f7' stroke-width='1.8' stroke-dasharray='5 3'/%3E%3C/svg%3E") 4 3;
+}
+
+body {
+  cursor: var(--cur-default), default;
+}
+
+/* Interactive: anything the player can actually act on. */
+a,
+button:not(:disabled),
+summary,
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+select,
+.chip:not(:disabled),
+input[type="range"] {
+  cursor: var(--cur-pointer), pointer;
+}
+
+/* Blocked: says why nothing happened before the click does. */
+button:disabled,
+[aria-disabled="true"],
+.btn:disabled,
+.chip:disabled {
+  cursor: var(--cur-disabled), not-allowed;
+}
+
+/* Busy: set on <body> while an action is in flight, and it has to win over everything. */
+body[data-busy="true"],
+body[data-busy="true"] * {
+  cursor: var(--cur-busy), progress !important;
+}
+
+/* Text stays native — precision matters more than theme wherever the player types or selects. */
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+textarea,
+[contenteditable="true"] {
+  cursor: text;
+}
+
+/* Coarse pointers have no cursor to style, and a touch device paying for these rules gains
+   nothing. */
+@media (pointer: coarse) {
+  body,
+  a,
+  button,
+  select,
+  .chip,
+  input[type="range"],
+  body[data-busy="true"],
+  body[data-busy="true"] * {
+    cursor: auto !important;
+  }
+}
+
+/* ============================================================
+   PvP
+   ============================================================ */
+
+/* The searching panel, as a scanning well rather than a status row. */
+.radar-well {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  background:
+    radial-gradient(120% 140% at 0% 50%, rgba(34, 211, 238, 0.18), transparent 60%),
+    rgba(34, 211, 238, 0.07);
+}
+.radar-well::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    rgba(34, 211, 238, 0.22) 50%,
+    transparent 65%
+  );
+  transform: translateX(-100%);
+  animation: sweep 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* One seat per player the bucket needs. */
+.seat {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.6rem;
+  border: 1px dashed var(--color-edge);
+  color: var(--color-mute);
+  background: rgba(0, 0, 0, 0.25);
+  transition: all 0.2s ease;
+}
+.seat-on {
+  border-style: solid;
+  border-color: rgba(34, 211, 238, 0.75);
+  color: #a5f3fc;
+  background: rgba(34, 211, 238, 0.16);
+  box-shadow: 0 0 18px -6px rgba(34, 211, 238, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .radar-well::after {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   Store
+   Shelf items with their own art, built the same way the card art panel is: layered
+   gradients and one glyph, no assets. Each item gets its own hue so the shelf reads as a
+   row of distinct objects rather than four copies of the same panel.
+   ============================================================ */
+
+.shelf {
+  position: relative;
+  border-radius: 1rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--item) 45%, transparent);
+  background: linear-gradient(165deg, rgba(23, 30, 56, 0.9), rgba(9, 12, 26, 0.96));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 16px 40px -26px color-mix(in srgb, var(--item) 70%, black);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.shelf:hover {
+  border-color: color-mix(in srgb, var(--item) 75%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 22px 50px -24px color-mix(in srgb, var(--item) 80%, black);
+}
+
+/* The lit alcove the item sits in. */
+.shelf-art {
+  position: relative;
+  height: 104px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--item) 28%, transparent);
+  background:
+    radial-gradient(70% 100% at 50% 0%, color-mix(in srgb, var(--item) 40%, transparent), transparent 70%),
+    linear-gradient(180deg, #0b0f21, #070a16);
+}
+/* A pool of light on the shelf under the item. */
+.shelf-art::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 62%;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, color-mix(in srgb, var(--item) 55%, transparent), transparent 70%);
+  filter: blur(3px);
+}
+.shelf-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 1rem;
+  /* Clips the shine below — without it the sweep sits outside the glyph as a stray streak. */
+  overflow: hidden;
+  color: #05060d;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--item) 55%, white), var(--item));
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.5),
+    0 0 34px -6px var(--item);
+  animation: bob 4.5s ease-in-out infinite;
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+/* A slow shine crossing the item, like glass on a shelf. */
+.shelf-glyph::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.55) 50%, transparent 60%);
+  transform: translateX(-140%);
+  transition: transform 0.8s ease;
+}
+.shelf:hover .shelf-glyph::after {
+  transform: translateX(140%);
+}
+
+.shelf-tag {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 10px;
+  font-weight: 700;
+  color: #04121b;
+  background: var(--color-mint);
+  box-shadow: 0 0 18px -4px var(--color-mint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shelf-glyph {
+    animation: none;
+  }
+}

@@ -1,102 +1,51 @@
-import { Trophy, Wallet } from "lucide-react";
 import { q } from "@/lib/db";
-import { num, usd } from "@/lib/fmt";
 import { currentUserId } from "@/lib/session";
+import Leaderboards, { type BoardRow, type MyStanding } from "@/components/Leaderboards";
 
 export const dynamic = "force-dynamic";
 
-type Row = { id: number; username: string; portfolio: number; xp: number };
-
-const MEDALS = ["🥇", "🥈", "🥉"];
-
-function Board({
-  title,
-  icon,
-  rows,
-  meId,
-  render,
-  accent,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  rows: Row[];
-  meId: number | null;
-  render: (r: Row) => string;
-  accent: string;
-}) {
-  return (
-    <section className="panel panel-hi overflow-hidden">
-      <h2 className="flex items-center gap-2 border-b border-edge px-4 py-3 font-semibold">
-        {icon}
-        {title}
-      </h2>
-      <ol>
-        {rows.map((r, i) => {
-          const me = r.id === meId;
-          return (
-            <li
-              key={r.id}
-              className={`flex items-center gap-3 border-b border-edge/40 px-4 py-2.5 text-sm last:border-0 ${
-                me ? "bg-buy/10" : i % 2 ? "bg-white/[0.015]" : ""
-              }`}
-            >
-              <span className="w-8 shrink-0 text-center font-mono text-xs text-mute">
-                {MEDALS[i] ?? `#${i + 1}`}
-              </span>
-              <span className={`flex-1 truncate ${me ? "font-semibold text-buy" : "text-slate-200"}`}>
-                {r.username}
-                {me && <span className="ml-1.5 text-[10px] text-mute">you</span>}
-              </span>
-              <span className="tabnum font-mono font-semibold" style={{ color: accent }}>
-                {render(r)}
-              </span>
-            </li>
-          );
-        })}
-        {!rows.length && <li className="px-4 py-10 text-center text-sm text-mute">No players yet.</li>}
-      </ol>
-    </section>
-  );
-}
+/**
+ * The detail a row reveals on hover, computed in SQL rather than fetched per row. The boards
+ * are 25 rows and every subquery is indexed, so doing it here costs one round trip instead of
+ * twenty-five.
+ */
+const BOARD = `
+  SELECT u.id, u.username, u.portfolio, u.xp,
+         (SELECT count(*)::int FROM cards c
+           WHERE c.owner_id = u.id AND c.match_id IS NULL) AS cards,
+         (SELECT count(*)::int FROM cards c
+           WHERE c.owner_id = u.id AND c.match_id IS NULL
+             AND c.status IN ('WON','EXERCISED','LAPSED')) AS wins,
+         (SELECT count(*)::int FROM cards c
+           WHERE c.owner_id = u.id AND c.match_id IS NULL
+             AND c.status <> 'ACTIVE') AS resolved,
+         (SELECT count(*)::int FROM match_players mp
+           WHERE mp.user_id = u.id AND mp.final_rank = 1) AS trophies
+    FROM users u`;
 
 export default async function RankingsPage() {
   const meId = await currentUserId();
-  const byPortfolio = await q<Row>(
-    `SELECT id, username, portfolio, xp FROM users ORDER BY portfolio DESC, xp DESC LIMIT 25`
-  );
-  const byXp = await q<Row>(
-    `SELECT id, username, portfolio, xp FROM users ORDER BY xp DESC, portfolio DESC LIMIT 25`
-  );
 
-  return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold">🏆 Rankings</h1>
-        <p className="mt-1 text-xs text-mute">
-          Two different kinds of success. Portfolio measures wealth you&apos;ve built and kept —
-          spending it drops you. XP only accumulates, and a correct option earns it whether you
-          exercise or not.
-        </p>
-      </header>
+  const [byPortfolio, byXp] = await Promise.all([
+    q<BoardRow>(`${BOARD} ORDER BY u.portfolio DESC, u.xp DESC LIMIT 25`),
+    q<BoardRow>(`${BOARD} ORDER BY u.xp DESC, u.portfolio DESC LIMIT 25`),
+  ]);
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Board
-          title="Portfolio Ranking"
-          icon={<Wallet size={16} className="text-mint" />}
-          rows={byPortfolio}
-          meId={meId}
-          accent="#34d399"
-          render={(r) => usd(r.portfolio, 0)}
-        />
-        <Board
-          title="XP Ranking"
-          icon={<Trophy size={16} className="text-sell" />}
-          rows={byXp}
-          meId={meId}
-          accent="#f472b6"
-          render={(r) => `${num(r.xp, 0)} XP`}
-        />
-      </div>
-    </div>
-  );
+  // A player outside the top 25 is still owed their own standing — being simply absent from
+  // the page that ranks you reads as a bug rather than as a ranking.
+  let mine: MyStanding | null = null;
+  if (meId) {
+    const [row] = await q<MyStanding>(
+      `SELECT
+         (SELECT count(*)::int FROM users x WHERE x.portfolio > u.portfolio) + 1 AS portfolio_rank,
+         (SELECT count(*)::int FROM users x WHERE x.xp > u.xp) + 1 AS xp_rank,
+         (SELECT count(*)::int FROM users) AS players,
+         u.id, u.username, u.portfolio, u.xp
+       FROM users u WHERE u.id = $1`,
+      [meId]
+    );
+    mine = row ?? null;
+  }
+
+  return <Leaderboards byPortfolio={byPortfolio} byXp={byXp} meId={meId} mine={mine} />;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Home, Layers, LogOut, Store, Swords, Trophy } from "lucide-react";
+import { BookOpen, Home, Layers, LogOut, Store, Swords, Trophy } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions/auth";
@@ -13,6 +13,7 @@ const items = [
   { href: "/store", label: "Store", icon: Store },
   { href: "/rankings", label: "Rankings", icon: Trophy },
   { href: "/pvp", label: "PvP", icon: Swords },
+  { href: "/guide", label: "Guide", icon: BookOpen },
 ];
 
 export default function Nav() {

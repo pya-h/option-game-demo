@@ -56,6 +56,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
   }, []);
 
+  // The busy cursor is driven from <body> rather than from a class on each button: an action
+  // in flight blocks the whole UI, so the whole UI should say so.
+  useEffect(() => {
+    document.body.dataset.busy = busy ? "true" : "false";
+  }, [busy]);
+
   const run: Ctx["run"] = useCallback(
     async (fn, okMsg) => {
       setBusy(true);
