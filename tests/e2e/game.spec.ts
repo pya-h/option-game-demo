@@ -84,9 +84,13 @@ test("a win too big to afford can be funded at the click, and only when asked", 
 
   // Deliberately larger than the OPT balance can cover: exercising burns the whole notional,
   // not just the profit, which is what strands most real wins.
+  // Sized against the starting OPT balance rather than a fixed number: exercising burns
+  // notional x EXERCISE_OPT_PER_DOLLAR, so the notional has to exceed what the player can
+  // pay. The assertion below proves it actually did.
+  const amount = Math.ceil((CFG.INITIAL_OPT_BALANCE / CFG.EXERCISE_OPT_PER_DOLLAR / SPOT) * 3);
   await page.click('button:has-text("BTC")');
   await page.locator('input[type="range"]').fill("-10");
-  await page.locator('input[type="number"]').first().fill("60");
+  await page.locator('input[type="number"]').first().fill(String(amount));
   await page.click('button:has-text("Mint BUY Option")');
   await page.waitForSelector("text=/Card #\\d+ minted/");
 
@@ -123,24 +127,32 @@ test("funding is refused when the Portfolio to cover it is locked as collateral"
   request,
 }) => {
   await signIn(page, "alice");
-  await mint(page, { kind: "BUY", strikePct: -10 });
+
+  // No funding this time, so the player has nothing free to burn. Same sizing as above: big
+  // enough that the win cannot be claimed out of the starting OPT balance.
+  const amount = Math.ceil((CFG.INITIAL_OPT_BALANCE / CFG.EXERCISE_OPT_PER_DOLLAR / SPOT) * 3);
+  await page.click('button:has-text("BTC")');
+  await page.locator('input[type="range"]').fill("-10");
+  await page.locator('input[type="number"]').first().fill(String(amount));
+  await page.click('button:has-text("Mint BUY Option")');
+  await page.waitForSelector("text=/Card #\\d+ minted/");
+
   await setPrices(request, { BTC: 120 });
   await expireCards(request);
   await page.reload();
   await expect.poll(async () => (await state(page)).cards[0].status).toBe("WON");
 
-  // A fresh player has no Portfolio at all, so there is nothing free to burn and the offer
-  // is never made — the button says what is missing instead of promising a way out.
   const s = await state(page);
-  expect(s.me.spendable).toBe(0);
-
-  await page.goto("/cards");
   const card = s.cards[0];
   const cost = Number(card.strike) * Number(card.amount) * CFG.EXERCISE_OPT_PER_DOLLAR;
-  if (s.me.opt < cost) {
-    await expect(page.getByText(/more OPT/)).toBeVisible();
-    await expect(page.getByText(/to cover\?/)).toHaveCount(0);
-  }
+  expect(s.me.opt).toBeLessThan(cost); // genuinely unaffordable
+  expect(s.me.spendable).toBe(0); // and nothing free to cover it with
+
+  // The offer is never made, because it could not be honoured. The button says what is
+  // missing rather than promising a way out that does not exist.
+  await page.goto("/cards");
+  await expect(page.getByText(/more OPT/)).toBeVisible();
+  await expect(page.getByText(/to cover\?/)).toHaveCount(0);
 });
 
 test("a Buy card below its strike settles LOST and awards nothing", async ({ page, request }) => {

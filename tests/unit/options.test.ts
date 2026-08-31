@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ASSETS, CFG, EXPIRIES, REFERENCE_SECONDS } from "@/lib/config";
+import { ASSETS, CFG, EXPIRIES, MAX_EXPIRY_SECONDS, REFERENCE_SECONDS } from "@/lib/config";
 import {
   cardValue,
   collateralFor,
   defaultAmount,
   exerciseCost,
+  exerciseDeadline,
   exercisePayout,
+  exerciseWindowSeconds,
   quotePremium,
   sellLoss,
 } from "@/lib/options";
@@ -150,5 +152,59 @@ describe("defaultAmount", () => {
       expect(Number.isFinite(a)).toBe(true);
       expect(a * spot).toBeLessThan(4000);
     }
+  });
+});
+
+describe("the exercise window", () => {
+  it("matches the anchors the curve was designed around", () => {
+    expect(exerciseWindowSeconds(900)).toBe(300); // a 15m card -> 5 minutes
+    expect(exerciseWindowSeconds(3600)).toBe(600); // an hour card -> 10 minutes
+  });
+
+  it("grows with the commitment, but never proportionally", () => {
+    const ratio = (s: number) => exerciseWindowSeconds(s) / s;
+    // A longer card earns more room in absolute terms...
+    expect(exerciseWindowSeconds(86400)).toBeGreaterThan(exerciseWindowSeconds(3600));
+    // ...and less of it relative to how long it ran.
+    expect(ratio(86400)).toBeLessThan(ratio(3600));
+    expect(ratio(3600)).toBeLessThan(ratio(900));
+  });
+
+  it("never decreases as expiry rises", () => {
+    let last = 0;
+    for (const s of [60, 300, 900, 3600, 21600, 86400, 604800, 2592000, 31536000]) {
+      const w = exerciseWindowSeconds(s);
+      expect(w).toBeGreaterThanOrEqual(last);
+      last = w;
+    }
+  });
+
+  it("clamps at the configured ceiling past a month", () => {
+    expect(exerciseWindowSeconds(2592000 * 2)).toBe(CFG.MAX_EXERCISE_WINDOW_SECONDS);
+    expect(exerciseWindowSeconds(MAX_EXPIRY_SECONDS)).toBe(CFG.MAX_EXERCISE_WINDOW_SECONDS);
+  });
+
+  it("gives the shortest card the floor rather than seconds", () => {
+    // A 1-minute card would get a 20-second window on a proportional curve, which is not
+    // enough time to notice, let alone act.
+    expect(exerciseWindowSeconds(60)).toBe(300);
+  });
+
+  it("runs from settlement, not from expiry", () => {
+    // A card settles on whichever poll reaches it, which can be well after it expired. The
+    // owner should not lose that gap to our scheduling.
+    const created = new Date("2026-01-01T00:00:00Z");
+    const expires = new Date("2026-01-01T00:15:00Z"); // ran 15 minutes
+    const settled = new Date("2026-01-01T00:47:00Z"); // noticed 32 minutes late
+    const deadline = exerciseDeadline(created, expires, settled);
+    expect(deadline.getTime() - settled.getTime()).toBe(300_000);
+    expect(deadline.getTime()).toBeGreaterThan(expires.getTime());
+  });
+
+  it("sizes the window from how long the card ran, not from what is left", () => {
+    const created = new Date("2026-01-01T00:00:00Z");
+    const short = exerciseDeadline(created, new Date("2026-01-01T00:15:00Z"), created);
+    const long = exerciseDeadline(created, new Date("2026-01-08T00:00:00Z"), created);
+    expect(long.getTime()).toBeGreaterThan(short.getTime());
   });
 });

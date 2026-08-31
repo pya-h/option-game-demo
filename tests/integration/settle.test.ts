@@ -28,15 +28,9 @@ async function rollback() {
 let seq = 0;
 async function mkUser(over: { opt?: number; portfolio?: number; locked?: number } = {}) {
   const { rows } = await c.query(
-    `INSERT INTO users (username, opt, portfolio, locked, energy, energy_capacity)
-     VALUES ($1,$2,$3,$4,0,$5) RETURNING *`,
-    [
-      `t${Date.now()}_${seq++}`,
-      over.opt ?? 1000,
-      over.portfolio ?? 1000,
-      over.locked ?? 0,
-      CFG.INITIAL_ENERGY_CAPACITY,
-    ]
+    `INSERT INTO users (username, opt, portfolio, locked, energy)
+     VALUES ($1,$2,$3,$4,0) RETURNING *`,
+    [`t${Date.now()}_${seq++}`, over.opt ?? 1000, over.portfolio ?? 1000, over.locked ?? 0]
   );
   return rows[0];
 }
@@ -49,11 +43,15 @@ async function mkCard(o: {
   collateral?: number;
   matchId?: number | null;
   premium?: number;
+  /** How long the card ran, which is what sizes the claim window on a win. */
+  ranSeconds?: number;
 }) {
   const { rows } = await c.query(
     `INSERT INTO cards (match_id, owner_id, creator_id, kind, asset, strike, amount,
-                        spot_at_create, premium, collateral, expires_at)
-     VALUES ($1,$2,$2,$3,'BTC',$4,$5,$4,$6,$7, now() - interval '1 second') RETURNING *`,
+                        spot_at_create, premium, collateral, created_at, expires_at)
+     VALUES ($1,$2,$2,$3,'BTC',$4,$5,$4,$6,$7,
+             now() - make_interval(secs => $8::int) - interval '1 second',
+             now() - interval '1 second') RETURNING *`,
     [
       o.matchId ?? null,
       o.owner,
@@ -62,6 +60,7 @@ async function mkCard(o: {
       o.amount,
       o.premium ?? 10,
       o.collateral ?? 0,
+      o.ranSeconds ?? 900,
     ]
   );
   const r = rows[0];
@@ -74,6 +73,8 @@ async function mkCard(o: {
     strike: Number(r.strike),
     amount: Number(r.amount),
     collateral: Number(r.collateral),
+    created_at: r.created_at,
+    expires_at: r.expires_at,
   };
 }
 
