@@ -1,6 +1,7 @@
 import {
   ASSET_MAP,
   CFG,
+  EXERCISE_WINDOWS,
   REFERENCE_SECONDS,
   TIME_VALUE_AT_REFERENCE,
   TIME_VALUE_EXPONENT,
@@ -72,6 +73,33 @@ export const exercisePayout = (strike: number, amount: number, settlePrice: numb
  */
 export const sellLoss = (strike: number, amount: number, settlePrice: number, collateral: number) =>
   Math.min(Math.max(0, settlePrice - strike) * amount, collateral);
+
+/**
+ * How long a win may be claimed, given how long the card originally ran.
+ *
+ * A win that could be exercised forever is a free option with no cost to holding it, which
+ * quietly removes the decision from the most interesting moment in the game. The scale is
+ * sublinear: a longer commitment earns more room to notice, but never proportionally more.
+ */
+export function exerciseWindowSeconds(expirySeconds: number) {
+  const band = EXERCISE_WINDOWS.find((w) => expirySeconds <= w.maxExpiry);
+  return Math.min(
+    CFG.MAX_EXERCISE_WINDOW_SECONDS,
+    band?.window ?? CFG.MAX_EXERCISE_WINDOW_SECONDS
+  );
+}
+
+/**
+ * When a card that just settled WON stops being claimable.
+ *
+ * Measured from settlement, not from expiry. A card settles on whichever poll happens to reach
+ * it, which can be a moment — or on a quiet demo, much longer — after it expired, and the
+ * player should not lose that time to our scheduling.
+ */
+export function exerciseDeadline(createdAt: Date | string, expiresAt: Date | string, settledAt: Date) {
+  const ran = (new Date(expiresAt).getTime() - new Date(createdAt).getTime()) / 1000;
+  return new Date(settledAt.getTime() + exerciseWindowSeconds(ran) * 1000);
+}
 
 /** Sensible default amount so a fresh player can actually afford a position on any asset. */
 export function defaultAmount(spot: number) {

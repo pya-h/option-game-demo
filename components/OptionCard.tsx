@@ -24,6 +24,8 @@ const STAMPS: Record<string, { text: string; cls: string }> = {
   LOST: { text: "LOST", cls: "text-danger" },
   EXERCISED: { text: "EXERCISED", cls: "text-gold" },
   SETTLED: { text: "SETTLED", cls: "text-mute" },
+  // Won, but never claimed in time. Still a win — the XP was paid at settlement.
+  LAPSED: { text: "LAPSED", cls: "text-mute" },
 };
 
 /**
@@ -58,6 +60,14 @@ export default function OptionCard({
   const isBuy = card.kind === "BUY";
   const mine = card.owner_id === meId;
   const live = card.status === "ACTIVE";
+  // A win is claimable until its window closes. The settler flips it to LAPSED on the next
+  // poll, so between polls the deadline is the thing to trust, not the status.
+  const claimable =
+    card.status === "WON" &&
+    !!card.exercise_deadline &&
+    new Date(card.exercise_deadline).getTime() > now;
+  // A match card carries no deadline: the whistle is its only clock.
+  const unlimited = card.status === "WON" && !card.exercise_deadline;
   const secondsLeft = Math.max(0, (new Date(card.expires_at).getTime() - now) / 1000);
 
   const refPrice = live ? spot : (card.settle_price ?? spot);
@@ -149,9 +159,23 @@ export default function OptionCard({
           <div className="tcg-stats">
             <Row label="Strike" value={price(card.strike)} />
             <Row label="Amount" value={`${amt(card.amount)} ${card.asset}`} />
+            {/* One row carries whichever clock matters: the expiry while the card is live, and
+                then the claim window while the win is claimable. Deliberately not a fourth row
+                — the frame is sized from its content and a Sell card is already the tallest
+                thing in the grid. */}
             <Row
-              label={live ? "Expires" : "Settled at"}
-              value={live ? <Countdown to={card.expires_at} /> : price(card.settle_price ?? 0)}
+              label={live ? "Expires" : claimable ? "Claim within" : "Settled at"}
+              value={
+                live ? (
+                  <Countdown to={card.expires_at} />
+                ) : claimable ? (
+                  <span className="text-gold">
+                    <Countdown to={card.exercise_deadline!} />
+                  </span>
+                ) : (
+                  price(card.settle_price ?? 0)
+                )
+              }
             />
             <div className="tcg-rule" />
             <Row
@@ -202,8 +226,12 @@ export default function OptionCard({
                       ? "Out of the money"
                       : "Obligation at risk"
                   : card.status === "WON"
-                    ? "Ready to exercise"
-                    : card.status === "EXERCISED"
+                    ? claimable || unlimited
+                      ? "Ready to claim"
+                      : "Window closed"
+                    : card.status === "LAPSED"
+                      ? "Never claimed"
+                      : card.status === "EXERCISED"
                       ? "Converted to Portfolio"
                       : card.status === "LOST"
                         ? "Expired worthless"

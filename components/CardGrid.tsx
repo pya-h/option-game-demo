@@ -51,7 +51,13 @@ export default function CardGrid({
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      {/* Container queries, not viewport breakpoints. The grid's real constraint is the column
+          it sits in, not the window: /home gives it ~850px next to a fixed 380px create panel
+          while /cards gives it the full shell. One set of viewport breakpoints cannot be right
+          for both, and picking for the wider page is what squeezed the home cards to 274px
+          against a 426px-tall frame. */}
+      <div className="@container">
+        <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @6xl:grid-cols-4">
         {cards.map((card, i) => {
           const spot = px.find((p) => p.asset === card.asset)?.price ?? 0;
           const mine = card.owner_id === uid;
@@ -70,7 +76,7 @@ export default function CardGrid({
                 {card.kind === "BUY" ? "Sell card" : "Offload obligation"}
               </button>
             );
-          } else if (!readOnly && mine && card.status === "WON") {
+          } else if (!readOnly && mine && card.status === "WON" && claimable(card)) {
             // Mirrors lib/options exerciseCost/exercisePayout with the rates the server
             // actually runs on. The fallback is the shared default rather than 1: state can
             // still be loading here (a match room polls on its own clock), and quoting a cost
@@ -128,6 +134,7 @@ export default function CardGrid({
             </div>
           );
         })}
+        </div>
       </div>
 
       <AnimatePresence>
@@ -146,6 +153,16 @@ export default function CardGrid({
     </>
   );
 }
+
+/**
+ * Whether a win can still be claimed.
+ *
+ * The settler flips an expired window to LAPSED on the next poll, so between polls a card can
+ * be past its deadline and still reading WON. The deadline is the truth; the status catches up.
+ */
+const claimable = (card: CardDTO) =>
+  // No deadline means no window — that's a match card, where the whistle is the only clock.
+  !card.exercise_deadline || new Date(card.exercise_deadline).getTime() > Date.now();
 
 /**
  * The exercise control on a winning card.

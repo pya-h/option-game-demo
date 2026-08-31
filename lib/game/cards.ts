@@ -18,11 +18,11 @@ import {
 } from "@/lib/config";
 import { fail, q, tx } from "@/lib/db";
 import { duration } from "@/lib/fmt";
-import { spendEnergy } from "@/lib/energy";
+import { spendEnergy, touchActivity } from "@/lib/energy";
 import { cardValue, collateralFor, exerciseCost, exercisePayout, quotePremium } from "@/lib/options";
 import { getPrice } from "@/lib/prices";
 import type { CardEventDTO } from "@/lib/types";
-import { applyWallet, loadWallet } from "@/lib/wallet";
+import { addXp, applyWallet, loadWallet } from "@/lib/wallet";
 import { type Res, guard } from "./guard";
 
 
@@ -155,6 +155,8 @@ export async function createCardFor(userId: number, input: CreateInput): Promise
             : `received ${premium} OPT premium · locked $${collateral.toFixed(2)}`,
       });
 
+      await touchActivity(c, me.id);
+
       return {
         ok: true,
         message:
@@ -202,7 +204,20 @@ export async function exerciseCardFor(
       if (!card) fail("card not found");
       if (card.owner_id !== me.id) fail("you don't own this card");
       if (card.kind !== "BUY") fail("only Buy Options can be exercised");
+      if (card.status === "LAPSED") fail("The claim window on this card has closed");
       if (card.status !== "WON") fail("only a winning card can be exercised");
+
+      // The lapse sweep runs in the settle pass, so a card can be past its deadline and still
+      // sitting at WON between polls. Checked here too, or the window would be enforced only
+      // as fast as someone happens to poll.
+      if (
+        card.match_id === null &&
+        card.exercise_deadline &&
+        new Date(card.exercise_deadline).getTime() <= Date.now()
+      ) {
+        await c.query(`UPDATE cards SET status = 'LAPSED' WHERE id = $1`, [cardId]);
+        fail("The claim window on this card has closed");
+      }
 
       // A finished match has already ranked its players, so moving PvP balances now would
       // change a standing nobody can see. Match end auto-exercises whatever was affordable.
@@ -243,19 +258,28 @@ export async function exerciseCardFor(
 
       await applyWallet(c, me.id, card.match_id, { opt: -cost, portfolio: payout });
       await c.query(`UPDATE cards SET status = 'EXERCISED' WHERE id = $1`, [cardId]);
+
+      // XP for claiming, on top of what the card already earned at settlement. PvP is
+      // excluded: XP is global-only progression there, paid once at the whistle (§29).
+      const xp = card.match_id === null ? CFG.EXERCISE_XP : 0;
+      if (xp) await addXp(c, me.id, xp);
+
       await logEvent(c, cardId, "EXERCISED", {
         actor: me.id,
         opt: -cost,
         portfolio: payout,
-        note: `burned ${cost.toFixed(0)} OPT for $${payout.toFixed(2)} Portfolio`,
+        note:
+          `burned ${cost.toFixed(0)} OPT for $${payout.toFixed(2)} Portfolio` +
+          (xp ? ` · +${xp} XP` : ""),
       });
+      await touchActivity(c, me.id);
 
       const net = payout - burned;
       return {
         ok: true,
         message: burned
-          ? `Exercised · burned $${burned.toFixed(0)} to cover · net +$${net.toFixed(0)} Portfolio`
-          : `Exercised · −${cost.toFixed(0)} OPT · +$${payout.toFixed(0)} Portfolio`,
+          ? `Exercised · burned $${burned.toFixed(0)} to cover · net +$${net.toFixed(0)} Portfolio${xp ? ` · +${xp} XP` : ""}`
+          : `Exercised · −${cost.toFixed(0)} OPT · +$${payout.toFixed(0)} Portfolio${xp ? ` · +${xp} XP` : ""}`,
       };
     });
   });
@@ -312,6 +336,7 @@ export async function listCardFor(userId: number, cardId: number, ask?: number |
             ? `asking $${price.toFixed(2)}${custom === null ? " (live value)" : ""}`
             : `offering ${price} OPT to assume`,
       });
+      await touchActivity(c, me.id);
       return {
         ok: true,
         message:
@@ -333,6 +358,7 @@ export async function unlistCardFor(userId: number, cardId: number): Promise<Res
       if (!rows[0].for_sale) fail("this card is not listed");
       await c.query(`UPDATE cards SET for_sale = FALSE, ask = NULL WHERE id = $1`, [cardId]);
       await logEvent(c, cardId, "UNLISTED", { actor: me.id });
+      await touchActivity(c, me.id);
       return { ok: true, message: "Removed from the marketplace" };
     });
   });
@@ -398,6 +424,7 @@ export async function acquireCardFor(userId: number, cardId: number): Promise<Re
           portfolio: price,
           note: `card bought for $${price.toFixed(2)} Portfolio`,
         });
+        await touchActivity(c, me.id);
         return { ok: true, message: `Card #${cardId} acquired for $${price.toFixed(0)}` };
       }
 
@@ -423,6 +450,7 @@ export async function acquireCardFor(userId: number, cardId: number): Promise<Re
         opt: takeover,
         note: `obligation assumed for ${takeover} OPT · $${collateral.toFixed(2)} collateral moved`,
       });
+      await touchActivity(c, me.id);
       return {
         ok: true,
         message: `Obligation assumed · +${takeover} OPT · $${collateral.toFixed(0)} locked`,

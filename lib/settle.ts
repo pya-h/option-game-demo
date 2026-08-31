@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { CFG, type AssetSymbol } from "./config";
 import { tx } from "./db";
-import { exerciseCost, exercisePayout, sellLoss } from "./options";
+import { exerciseCost, exerciseDeadline, exercisePayout, sellLoss } from "./options";
 import { runMatchmakingInTx } from "./game/matchmaking";
 import { getPrices } from "./prices";
 
@@ -22,7 +22,13 @@ type DueCard = {
   strike: number;
   amount: number;
   collateral: number;
+  created_at: string;
+  expires_at: string;
 };
+
+/** Columns settleCard needs, in one place so every query that feeds it stays in step. */
+const DUE_COLUMNS =
+  "id, match_id, owner_id, kind, asset, strike, amount, collateral, created_at, expires_at";
 
 async function logEvent(
   c: PoolClient,
@@ -43,10 +49,20 @@ export async function settleCard(c: PoolClient, card: DueCard, spot: number) {
 
   if (card.kind === "BUY") {
     const won = spot > card.strike;
+    // A win starts a clock. Measured from now rather than from expiry: a card settles on
+    // whichever poll reaches it, and the owner shouldn't lose the gap to our scheduling.
+    //
+    // Global cards only. A match already has a clock, and auto-exercises everything affordable
+    // at the whistle — a second, shorter deadline inside it could strand a win the player was
+    // never given a chance to claim.
+    const deadline =
+      won && !isPvp ? exerciseDeadline(card.created_at, card.expires_at, new Date()) : null;
     await c.query(
-      `UPDATE cards SET status = $2, settle_price = $3, settled_at = now(), for_sale = FALSE
-       WHERE id = $1`,
-      [card.id, won ? "WON" : "LOST", spot]
+      `UPDATE cards
+          SET status = $2, settle_price = $3, settled_at = now(), for_sale = FALSE,
+              exercise_deadline = $4
+        WHERE id = $1`,
+      [card.id, won ? "WON" : "LOST", spot, deadline]
     );
     // XP is global-only progression; PvP grants XP once, at match settlement (§29).
     if (won && !isPvp) {
@@ -109,7 +125,7 @@ export async function settleDue() {
     if (!got[0]?.ok) return;
 
     const { rows: due } = await c.query<DueCard>(
-      `SELECT id, match_id, owner_id, kind, asset, strike, amount, collateral
+      `SELECT ${DUE_COLUMNS}
          FROM cards WHERE status = 'ACTIVE' AND expires_at <= now()
          ORDER BY id FOR UPDATE`
     );
@@ -118,6 +134,15 @@ export async function settleDue() {
       if (!spot) continue; // no price for this asset right now; retry next poll
       await settleCard(c, card, spot);
     }
+
+    // Wins nobody claimed in time. They stay wins — the XP was paid at settlement and is not
+    // taken back — they simply stop being convertible into Portfolio. Only global cards: a
+    // match card's window is irrelevant because match end auto-exercises whatever it can.
+    await c.query(
+      `UPDATE cards SET status = 'LAPSED'
+        WHERE status = 'WON' AND match_id IS NULL
+          AND exercise_deadline IS NOT NULL AND exercise_deadline <= now()`
+    );
 
     const { rows: ended } = await c.query<{ id: number }>(
       `SELECT id FROM matches WHERE status = 'ACTIVE' AND ends_at <= now() FOR UPDATE`
@@ -141,7 +166,7 @@ export async function finalizeMatchInTx(
   prices: Awaited<ReturnType<typeof getPrices>>
 ) {
   const { rows: open } = await c.query<DueCard>(
-    `SELECT id, match_id, owner_id, kind, asset, strike, amount, collateral
+    `SELECT ${DUE_COLUMNS}
        FROM cards WHERE match_id = $1 AND status = 'ACTIVE' ORDER BY id FOR UPDATE`,
     [matchId]
   );
